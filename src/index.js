@@ -15,18 +15,6 @@ eventHandler(client);
 
 client.login(process.env.TOKEN);
 
-// const CHANNEL_ID = '1399445295921758208';
-
-// async function checkStatus() {
-
-//   const channel = await client.channels.fetch(CHANNEL_ID);
-//   if (channel) {
-//     await channel.send({
-//       content: 'Bot is now online.'
-//     });
-//   }
-// }
-
 // // clear temporary files
 // function clearFolder(folderPath) {
 //   fs.readdir(folderPath, (err, files) => {
@@ -51,9 +39,5 @@ client.login(process.env.TOKEN);
 //     }
 //   });
 // }
-
-// client.once('ready', () => {
-//   checkStatus();
-// });
 
 // clearFolder('./bot/images/temporary')

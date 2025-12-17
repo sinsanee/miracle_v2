@@ -1,8 +1,6 @@
 const { Client, Interaction, ApplicationCommandOptionType, EmbedBuilder , ButtonBuilder, ButtonStyle, ActionRowBuilder, AttachmentBuilder, ComponentType, TimestampStyles,} = require('discord.js');
-const { PythonShell } = require('python-shell')
-const { runQuery } = require('../../models/query')
-const deleteFiles = require('../../models/deleteFiles')
-const fs = require('fs');
+const { resolveImageBuffer } = require("../../models/imageResolver");
+const { userExists } = require('../../models/users');
 
 module.exports = {
     /**
@@ -12,7 +10,19 @@ module.exports = {
     callback: async (client, interaction) => {
 
     await interaction.deferReply();
-        let
+        // Variables
+        const name = interaction.options.get('name').value
+        const set = interaction.options.get('set').value
+        const attachment = nteraction.options.getAttachment('image').value
+        const url = nteraction.options.getAttachment('url').value
+        const author = interaction.user.id
+
+        if (!(await userExists(interaction.user.id))) {
+            return interaction.editReply({
+                content: 'You are already registered.',
+                ephemeral: true
+            });
+        }
     },
     name: 'generate',
     description: 'Generate a card (admin only)',
@@ -25,10 +35,22 @@ module.exports = {
             required: true
         },
         {
-            name: 'series',
-            description: 'The series of this card',
+            name: 'image',
+            description: 'The image you want to use for this card (aspect ratio of 1:1)',
+            type: ApplicationCommandOptionType.Attachment,
+            required: false
+        },
+        {
+            name: 'url',
+            description: 'Incase you want to use an image url instead of an attachment (aspect ratio of 1:1)',
+            type: ApplicationCommandOptionType.Attachment,
+            required: false
+        },
+        {
+            name: 'set',
+            description: 'The set of this card (Default = Current Set)',
             type: ApplicationCommandOptionType.String,
-            required: true,
+            required: false,
             choices: [
                 {
                     name: 'Alpha',
@@ -37,50 +59,10 @@ module.exports = {
             ]
         },
         {
-            name: 'rarity',
-            description: 'The rarity of this card',
+            name: 'edition',
+            description: 'Which edition is this card? (Default 1)',
             type: ApplicationCommandOptionType.String,
-            required: true,
-            choices: [
-                {
-                    name: 'Common',
-                    value: 'Common'
-                },
-                {
-                    name: 'Uncommon',
-                    value: 'Uncommon'
-                },
-                {
-                    name: 'Rare',
-                    value: 'Rare'
-                },
-                {
-                    name: 'Full Art',
-                    value: 'Full Art'
-                },
-                {
-                    name: 'Legendary',
-                    value: 'Legendary'
-                }
-            ]
-        },
-        {
-            name: 'image-url',
-            description: 'The image you want to use for this card (aspect ratio of 1:1 for common-rare and 1:1.5 otherwise)',
-            type: ApplicationCommandOptionType.String,
-            required: true
-        },
-        {
-            name: 'release-date',
-            description: 'The date the card should release, (YYYY-MM-DD)',
-            type: ApplicationCommandOptionType.String,
-            required: false,
-        },
-        {
-            name: 'release-time',
-            description: 'The time the card should release, (HH:MM in 24 hour format)',
-            type: ApplicationCommandOptionType.String,
-            required: false,
+            required: false
         },
     ]
 }
