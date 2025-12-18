@@ -1,6 +1,8 @@
 const { Client, Interaction, ApplicationCommandOptionType, EmbedBuilder , ButtonBuilder, ButtonStyle, ActionRowBuilder, AttachmentBuilder, ComponentType, TimestampStyles,} = require('discord.js');
 const { resolveImageBuffer } = require("../../models/imageResolver");
 const { userExists } = require('../../models/users');
+const { cardGen } = require('../../models/cardGen');
+const sharp = require("sharp")
 
 module.exports = {
     /**
@@ -8,19 +10,48 @@ module.exports = {
      * @param {Interaction} interaction
      */
     callback: async (client, interaction) => {
-
-    await interaction.deferReply();
         // Variables
         const name = interaction.options.get('name').value
-        const set = interaction.options.get('set').value
-        const attachment = nteraction.options.getAttachment('image').value
-        const url = nteraction.options.getAttachment('url').value
+        const set = interaction.options.get('set')?.value || "Alpha"
+        const attachment = interaction.options.getAttachment('image')
+        const url = interaction.options.getString('url')
+        const edition = interaction.options.get('edition')?.value || 1
         const author = interaction.user.id
+
+        console.log(interaction.options.get("image"));
 
         if (!(await userExists(interaction.user.id))) {
             return interaction.editReply({
                 content: 'You are already registered.',
                 ephemeral: true
+            });
+        }
+
+        const imageOption = attachment ?? url;
+
+        if (!imageOption) {
+            return interaction.reply({
+                content: "Please provide an image or image URL.",
+                ephemeral: true
+            });
+        }
+        
+        await interaction.deferReply();
+
+        try {
+            const buffer = await resolveImageBuffer(imageOption);
+
+            const output = await cardGen(buffer, {
+                name,
+                subtitle: "stfu retard nigger"
+            });
+
+            await interaction.editReply({
+                files: [{ attachment: output, name: "card.png" }]
+            });
+        } catch (err) {
+            await interaction.editReply({
+                content: `❌ ${err.message}`
             });
         }
     },
@@ -43,7 +74,7 @@ module.exports = {
         {
             name: 'url',
             description: 'Incase you want to use an image url instead of an attachment (aspect ratio of 1:1)',
-            type: ApplicationCommandOptionType.Attachment,
+            type: ApplicationCommandOptionType.String,
             required: false
         },
         {
