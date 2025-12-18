@@ -3,6 +3,8 @@ const { resolveImageBuffer } = require("../../models/imageResolver");
 const { userExists } = require('../../models/users');
 const { cardGen, cardGenFromCropped } = require('../../models/cardGen');
 const { cropImage } = require("../../models/imageCrop");
+const { getBorder } = require("../../models/getBorder");
+const { all, get, run } = require('../../models/query');
 const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp")
@@ -15,11 +17,15 @@ module.exports = {
     callback: async (client, interaction) => {
         // Variables
         const name = interaction.options.get('name').value
-        const set = interaction.options.get('set')?.value || "Alpha"
+        const set = interaction.options.get('set')?.value || 1
         const img = interaction.options.getAttachment('image')
         const url = interaction.options.getString('url')
         const edition = interaction.options.get('edition')?.value || 1
         const author = interaction.user.id
+
+        const border = await getBorder(set)
+
+        console.log(border)
 
         console.log(interaction.options.get("image"));
 
@@ -49,11 +55,15 @@ module.exports = {
         await interaction.deferReply();
         const buffer = await resolveImageBuffer(imageOption);
 
+        // Default crop mode (important)
+        const cropMode = "centre";
+
         const output = await cardGen(buffer, {
             name,
             subtitle: "MR25NX",
-            footer: "51277"
-        });
+            footer: "51277",
+        }, cropMode, border);
+
 
         // Cropping selection menu
         const cropSelect = new ActionRowBuilder().addComponents(
@@ -83,14 +93,11 @@ module.exports = {
                 .setStyle(ButtonStyle.Danger)
         );
 
-        // Default crop mode (important)
-        const cropMode = "centre";
-
         const image = await cardGen(buffer, {
             name,
             subtitle: "",
-            footer: ""
-        }, cropMode);
+            footer: "",
+        }, cropMode, border);
 
         const attachment = new AttachmentBuilder(image, {
             name: "card.png"
@@ -112,7 +119,9 @@ module.exports = {
             buffer,
             data: { name, subtitle: "", footer: "" },
             cropMode: "centre",
-            author: interaction.user.id
+            author: interaction.user.id,
+            edition,
+            set
         });
 
         // Selection menu logic
@@ -137,7 +146,8 @@ module.exports = {
             const newImage = await cardGen(
                 state.buffer,
                 state.data,
-                cropMode
+                cropMode,
+                border
             );
 
             // Creates the new attachment and message
@@ -168,33 +178,50 @@ module.exports = {
                 });
             }
 
-            const { buffer, data, cropMode } = state;
+            const { buffer, data, cropMode, edition, set } = state;
 
             // Generate cropped image (NO border)
             const croppedImage = await cropImage(buffer, cropMode);
 
             // Generate full card (WITH border)
-            const finalCard = await cardGenFromCropped(croppedImage, data);
+            const finalCard = await cardGenFromCropped(croppedImage, data, border);
+
+            // Get the next ID from database
+            const maxIdRow = await get('SELECT MAX(id) as maxId FROM cards');
+            const nextId = Number(maxIdRow?.maxId || 0) + 1;
 
             // Save both
             const basePath = path.join(__dirname, "../../img/cards");
-            const cardId = Date.now(); // or DB id
+            const cardId = Date.now();
 
-            fs.writeFileSync(
-                path.join(basePath, `card_${cardId}.png`),
-                finalCard
-            );
+            const borderedImagePath = `.\\src\\img\\cards\\card_${cardId}.png`;
+            const croppedImagePath = `.\\src\\img\\cards\\card_${cardId}_image.png`;
 
-            fs.writeFileSync(
-                path.join(basePath, `card_${cardId}_image.png`),
-                croppedImage
-            );
+            fs.writeFileSync(path.join(basePath, `card_${cardId}.png`), finalCard);
+            fs.writeFileSync(path.join(basePath, `card_${cardId}_image.png`), croppedImage);
+
+            // Save to database
+            try {
+                await run(
+                    'INSERT INTO cards (id, edition, name, `set`, image, bordered_image, creator) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [nextId, edition, data.name, set, croppedImagePath, borderedImagePath, state.author]
+                );
+                console.log(`Card saved to database with ID: ${nextId}`);
+            } catch (err) {
+                console.error('Failed to save card to database:', err);
+                await interaction.update({
+                    content: "❌ Card saved to files but failed to save to database. Check console for errors.",
+                    components: [],
+                    files: interaction.message.attachments.map(a => a)
+                });
+                return;
+            }
 
             // Cleanup state
             activeCards.delete(interaction.message.id);
 
             await interaction.update({
-                content: "✅ Card confirmed and saved!",
+                content: `✅ Card confirmed and saved! (ID: ${nextId})`,
                 components: [],
                 files: interaction.message.attachments.map(a => a)
             });
@@ -250,12 +277,12 @@ module.exports = {
         {
             name: 'set',
             description: 'The set of this card (Default = Current Set)',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.Integer,
             required: false,
             choices: [
                 {
                     name: 'Alpha',
-                    value: 'a'
+                    value: 1
                 }
             ]
         },

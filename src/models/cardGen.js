@@ -6,7 +6,7 @@ const CANVAS_HEIGHT = 910;
 const IMAGE_WIDTH = 550;
 const IMAGE_HEIGHT = 600;
 
-async function cardGen(imageBuffer, data, cropMode = "centre") {
+async function cardGen(imageBuffer, data, cropMode = "centre", border) {
   const isStretch = cropMode === "stretch";
 
   const resizedImage = await sharp(imageBuffer)
@@ -28,14 +28,14 @@ async function cardGen(imageBuffer, data, cropMode = "centre") {
   })
     .composite([
       { input: resizedImage, left: 62, top: 62 },
-      { input: "./src/img/borders/atpl2.png" },
+      { input: border },
       { input: textLayer }
     ])
     .png()
     .toBuffer();
 }
 
-async function cardGenFromCropped(croppedImage, data) {
+async function cardGenFromCropped(croppedImage, data, border) {
   const textLayer = drawTextLayer(data);
 
   return sharp({
@@ -48,7 +48,7 @@ async function cardGenFromCropped(croppedImage, data) {
   })
     .composite([
       { input: croppedImage, left: 62, top: 62 },
-      { input: "./src/img/borders/atpl2.png" },
+      { input: border },
       { input: textLayer }
     ])
     .png()
