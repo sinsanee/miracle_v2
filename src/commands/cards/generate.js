@@ -23,6 +23,7 @@ module.exports = {
 
         console.log(interaction.options.get("image"));
 
+        // User registered check
         if (!(await userExists(interaction.user.id))) {
             return interaction.editReply({
                 content: 'You are already registered.',
@@ -30,10 +31,13 @@ module.exports = {
             });
         }
 
+        // Creates a map for currently active cards
         const activeCards = new Map();
 
+        // Chooses which images option is chosen, or null
         const imageOption = img ?? url;
 
+        // If there is no image
         if (!imageOption) {
             return interaction.reply({
                 content: "Please provide an image or image URL.",
@@ -41,6 +45,7 @@ module.exports = {
             });
         }
         
+        // Create the image
         await interaction.deferReply();
         const buffer = await resolveImageBuffer(imageOption);
 
@@ -50,6 +55,7 @@ module.exports = {
             footer: "51277"
         });
 
+        // Cropping selection menu
         const cropSelect = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId("crop_select")
@@ -64,6 +70,7 @@ module.exports = {
                 ])
         );
 
+        // Setting the buttons
         const actionButtons = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId("confirm_card")
@@ -76,6 +83,7 @@ module.exports = {
                 .setStyle(ButtonStyle.Danger)
         );
 
+        // Default crop mode (important)
         const cropMode = "centre";
 
         const image = await cardGen(buffer, {
@@ -88,6 +96,7 @@ module.exports = {
             name: "card.png"
         });
 
+        // Send the message
         const message = await interaction.editReply({
             content: "🖼️ Card preview",
             files: [attachment],
@@ -98,6 +107,7 @@ module.exports = {
             files: [{ attachment: output, name: "card.png" }]
         });
 
+        // Sets the current card as active
         activeCards.set(message.id, {
             buffer,
             data: { name, subtitle: "", footer: "" },
@@ -105,6 +115,7 @@ module.exports = {
             author: interaction.user.id
         });
 
+        // Selection menu logic
         client.on("interactionCreate", async interaction => {
             if (!interaction.isStringSelectMenu()) return;
             if (interaction.customId !== "crop_select") return;
@@ -112,6 +123,7 @@ module.exports = {
             const state = activeCards.get(interaction.message.id);
             if (!state) return;
 
+            // Check if it's actually your card
             if (interaction.user.id !== state.author) {
                 return interaction.reply({
                 content: "❌ This is not your card.",
@@ -128,6 +140,7 @@ module.exports = {
                 cropMode
             );
 
+            // Creates the new attachment and message
             const attachment = new AttachmentBuilder(newImage, {
                 name: "card.png"
             });
@@ -139,10 +152,12 @@ module.exports = {
             });
         });
 
+        // Confirm button logic
         client.on("interactionCreate", async interaction => {
             if (!interaction.isButton()) return;
             if (interaction.customId !== "confirm_card") return;
 
+            // If the card is no longer there simply return
             const state = activeCards.get(interaction.message.id);
             if (!state) return;
 
@@ -155,13 +170,13 @@ module.exports = {
 
             const { buffer, data, cropMode } = state;
 
-            // 🔹 1. Generate cropped image (NO border)
+            // Generate cropped image (NO border)
             const croppedImage = await cropImage(buffer, cropMode);
 
-            // 🔹 2. Generate full card (WITH border)
+            // Generate full card (WITH border)
             const finalCard = await cardGenFromCropped(croppedImage, data);
 
-            // 🔹 3. Save both
+            // Save both
             const basePath = path.join(__dirname, "../../img/cards");
             const cardId = Date.now(); // or DB id
 
@@ -175,7 +190,7 @@ module.exports = {
                 croppedImage
             );
 
-            // 🔹 4. Cleanup state
+            // Cleanup state
             activeCards.delete(interaction.message.id);
 
             await interaction.update({
@@ -185,6 +200,7 @@ module.exports = {
             });
         });
 
+        // Cancel button logic
         client.on("interactionCreate", async interaction => {
             if (!interaction.isButton()) return;
             if (interaction.customId !== "cancel_card") return;
@@ -199,7 +215,7 @@ module.exports = {
                 });
             }
 
-            // 🧹 Cleanup state
+            // Cleanup state
             activeCards.delete(interaction.message.id);
 
             await interaction.update({
