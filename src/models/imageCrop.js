@@ -6,9 +6,15 @@ async function cropImage(buffer, cropMode) {
   return sharp(buffer)
     .resize(550, 600, {
       fit: isStretch ? "fill" : "cover",
-      position: isStretch ? undefined : cropMode
+      position: isStretch ? undefined : cropMode,
+      kernel: sharp.kernel.lanczos3, // High-quality resampling
+      fastShrinkOnLoad: false // Disable fast shrink for better quality
     })
-    .png()
+    .png({
+      compressionLevel: 6, // Balance between file size and quality (0-9)
+      quality: 100, // Maximum quality
+      palette: false // Disable palette-based PNG for better quality
+    })
     .toBuffer();
 }
 

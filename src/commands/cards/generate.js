@@ -189,6 +189,7 @@ module.exports = {
             // Get the next ID from database
             const maxIdRow = await get('SELECT MAX(id) as maxId FROM cards');
             const nextId = Number(maxIdRow?.maxId || 0) + 1;
+            console.log(nextId, maxIdRow.maxId)
 
             // Save both
             const basePath = path.join(__dirname, "../../img/cards");
@@ -283,6 +284,10 @@ module.exports = {
                 {
                     name: 'Alpha',
                     value: 1
+                },
+                {
+                    name: 'Christmas',
+                    value: 2
                 }
             ]
         },
