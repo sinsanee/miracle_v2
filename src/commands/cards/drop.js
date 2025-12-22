@@ -52,16 +52,21 @@ module.exports = {
          * Pick a random set based on rarity (higher rarity = more common)
          */
         async function pickRandomSet() {
-            const sets = await all('SELECT id, name, border, rarity FROM sets WHERE available = 1');
+            const sets = await all('SELECT id, name, border, rarity FROM sets');
             
             if (sets.length === 0) {
                 throw new Error('No sets found in database');
             }
 
-            // Create weighted array based on rarity
+            // Find the maximum rarity value
+            const maxRarity = Math.max(...sets.map(s => s.rarity));
+
+            // Create weighted array based on inverted rarity
+            // Higher rarity number = fewer entries = more rare
             const weightedSets = [];
             sets.forEach(set => {
-                for (let i = 0; i < set.rarity; i++) {
+                const weight = maxRarity - set.rarity + 1;
+                for (let i = 0; i < weight; i++) {
                     weightedSets.push(set);
                 }
             });

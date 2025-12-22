@@ -25,20 +25,13 @@ module.exports = {
 
         const border = await getBorder(set)
 
-        console.log(border)
-
-        console.log(interaction.options.get("image"));
-
         // User registered check
         if (!(await userExists(interaction.user.id))) {
-            return interaction.editReply({
-                content: 'You are already registered.',
+            return interaction.reply({
+                content: 'You are not registered.',
                 ephemeral: true
             });
         }
-
-        // Creates a map for currently active cards
-        const activeCards = new Map();
 
         // Chooses which images option is chosen, or null
         const imageOption = img ?? url;
@@ -51,207 +44,205 @@ module.exports = {
             });
         }
         
-        // Create the image
-        await interaction.deferReply();
-        const buffer = await resolveImageBuffer(imageOption);
+        try {
+            // Create the image
+            await interaction.deferReply();
+            const buffer = await resolveImageBuffer(imageOption);
 
-        // Default crop mode (important)
-        const cropMode = "centre";
+            // Default crop mode (important)
+            let cropMode = "centre";
 
-        const output = await cardGen(buffer, {
-            name,
-            subtitle: "MR25NX",
-            footer: "51277",
-        }, cropMode, border);
+            const image = await cardGen(buffer, {
+                name,
+                subtitle: "",
+                footer: "",
+            }, cropMode, border);
 
-
-        // Cropping selection menu
-        const cropSelect = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-                .setCustomId("crop_select")
-                .setPlaceholder("Choose crop mode")
-                .addOptions([
-                    { label: "Center", value: "centre" },
-                    { label: "Left", value: "left" },
-                    { label: "Right", value: "right" },
-                    { label: "Top", value: "top" },
-                    { label: "Bottom", value: "bottom" },
-                    { label: "Stretch", value: "stretch" }
-                ])
-        );
-
-        // Setting the buttons
-        const actionButtons = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId("confirm_card")
-                .setLabel("Confirm")
-                .setStyle(ButtonStyle.Success),
-
-            new ButtonBuilder()
-                .setCustomId("cancel_card")
-                .setLabel("Cancel")
-                .setStyle(ButtonStyle.Danger)
-        );
-
-        const image = await cardGen(buffer, {
-            name,
-            subtitle: "",
-            footer: "",
-        }, cropMode, border);
-
-        const attachment = new AttachmentBuilder(image, {
-            name: "card.png"
-        });
-
-        // Send the message
-        const message = await interaction.editReply({
-            content: "🖼️ Card preview",
-            files: [attachment],
-            components: [cropSelect, actionButtons]
-        });
-
-        await interaction.editReply({
-            files: [{ attachment: output, name: "card.png" }]
-        });
-
-        // Sets the current card as active
-        activeCards.set(message.id, {
-            buffer,
-            data: { name, subtitle: "", footer: "" },
-            cropMode: "centre",
-            author: interaction.user.id,
-            edition,
-            set
-        });
-
-        // Selection menu logic
-        client.on("interactionCreate", async interaction => {
-            if (!interaction.isStringSelectMenu()) return;
-            if (interaction.customId !== "crop_select") return;
-
-            const state = activeCards.get(interaction.message.id);
-            if (!state) return;
-
-            // Check if it's actually your card
-            if (interaction.user.id !== state.author) {
-                return interaction.reply({
-                content: "❌ This is not your card.",
-                ephemeral: true
-                });
-            }
-
-            const cropMode = interaction.values[0];
-            state.cropMode = cropMode;
-
-            const newImage = await cardGen(
-                state.buffer,
-                state.data,
-                cropMode,
-                border
+            // Cropping selection menu
+            const cropSelect = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId(`crop_select_${interaction.id}`)
+                    .setPlaceholder("Choose crop mode")
+                    .addOptions([
+                        { label: "Center", value: "centre" },
+                        { label: "Left", value: "left" },
+                        { label: "Right", value: "right" },
+                        { label: "Top", value: "top" },
+                        { label: "Bottom", value: "bottom" },
+                        { label: "Stretch", value: "stretch" }
+                    ])
             );
 
-            // Creates the new attachment and message
-            const attachment = new AttachmentBuilder(newImage, {
+            // Setting the buttons
+            const actionButtons = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`confirm_card_${interaction.id}`)
+                    .setLabel("Confirm")
+                    .setStyle(ButtonStyle.Success),
+
+                new ButtonBuilder()
+                    .setCustomId(`cancel_card_${interaction.id}`)
+                    .setLabel("Cancel")
+                    .setStyle(ButtonStyle.Danger)
+            );
+
+            const attachment = new AttachmentBuilder(image, {
                 name: "card.png"
             });
 
-            await interaction.update({
+            // Send the message
+            const message = await interaction.editReply({
                 content: "🖼️ Card preview",
                 files: [attachment],
-                components: interaction.message.components
+                components: [cropSelect, actionButtons]
             });
-        });
 
-        // Confirm button logic
-        client.on("interactionCreate", async interaction => {
-            if (!interaction.isButton()) return;
-            if (interaction.customId !== "confirm_card") return;
+            // Store card state
+            const cardState = {
+                buffer,
+                data: { name, subtitle: "", footer: "" },
+                cropMode: "centre",
+                author: interaction.user.id,
+                edition,
+                set,
+                border
+            };
 
-            // If the card is no longer there simply return
-            const state = activeCards.get(interaction.message.id);
-            if (!state) return;
+            // Create collector
+            const collector = message.createMessageComponentCollector({
+                idle: 300000 // 5 minutes of inactivity
+            });
 
-            if (interaction.user.id !== state.author) {
-                return interaction.reply({
-                content: "❌ This is not your card.",
-                ephemeral: true
-                });
-            }
+            collector.on('collect', async (i) => {
+                // Check if it's actually the author's card
+                if (i.user.id !== cardState.author) {
+                    return i.reply({
+                        content: "❌ This is not your card.",
+                        ephemeral: true
+                    }).catch(console.error);
+                }
 
-            const { buffer, data, cropMode, edition, set } = state;
+                try {
+                    // Handle crop selection
+                    if (i.isStringSelectMenu() && i.customId === `crop_select_${interaction.id}`) {
+                        const newCropMode = i.values[0];
+                        cardState.cropMode = newCropMode;
 
-            // Generate cropped image (NO border)
-            const croppedImage = await cropImage(buffer, cropMode);
+                        const newImage = await cardGen(
+                            cardState.buffer,
+                            cardState.data,
+                            newCropMode,
+                            border
+                        );
 
-            // Generate full card (WITH border)
-            const finalCard = await cardGenFromCropped(croppedImage, data, border);
+                        const attachment = new AttachmentBuilder(newImage, {
+                            name: "card.png"
+                        });
 
-            // Get the next ID from database
-            const maxIdRow = await get('SELECT MAX(id) as maxId FROM cards');
-            const nextId = Number(maxIdRow?.maxId || 0) + 1;
-            console.log(nextId, maxIdRow.maxId)
+                        await i.update({
+                            content: "🖼️ Card preview",
+                            files: [attachment],
+                            components: i.message.components
+                        }).catch(console.error);
 
-            // Save both
-            const basePath = path.join(__dirname, "../../img/cards");
-            const cardId = Date.now();
+                        collector.resetTimer();
+                    }
+                    // Handle confirm button
+                    else if (i.isButton() && i.customId === `confirm_card_${interaction.id}`) {
+                        const { buffer, data, cropMode, edition, set } = cardState;
 
-            const borderedImagePath = `.\\src\\img\\cards\\card_${cardId}.png`;
-            const croppedImagePath = `.\\src\\img\\cards\\card_${cardId}_image.png`;
+                        // Generate cropped image (NO border)
+                        const croppedImage = await cropImage(buffer, cropMode);
 
-            fs.writeFileSync(path.join(basePath, `card_${cardId}.png`), finalCard);
-            fs.writeFileSync(path.join(basePath, `card_${cardId}_image.png`), croppedImage);
+                        // Generate full card (WITH border)
+                        const finalCard = await cardGenFromCropped(croppedImage, data, border);
 
-            // Save to database
+                        // Get the next ID from database
+                        const maxIdRow = await get('SELECT MAX(id) as maxId FROM cards');
+                        const nextId = Number(maxIdRow?.maxId || 0) + 1;
+
+                        // Save both
+                        const basePath = path.join(__dirname, "../../img/cards");
+                        const cardId = Date.now();
+
+                        const borderedImagePath = `.\\src\\img\\cards\\card_${cardId}.png`;
+                        const croppedImagePath = `.\\src\\img\\cards\\card_${cardId}_image.png`;
+
+                        fs.writeFileSync(path.join(basePath, `card_${cardId}.png`), finalCard);
+                        fs.writeFileSync(path.join(basePath, `card_${cardId}_image.png`), croppedImage);
+
+                        // Save to database
+                        try {
+                            await run(
+                                'INSERT INTO cards (id, edition, name, `set`, image, bordered_image, creator) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                                [nextId, edition, data.name, set, croppedImagePath, borderedImagePath, cardState.author]
+                            );
+                            console.log(`Card saved to database with ID: ${nextId}`);
+                        } catch (err) {
+                            console.error('Failed to save card to database:', err);
+                            await i.update({
+                                content: "❌ Card saved to files but failed to save to database. Check console for errors.",
+                                components: [],
+                                files: i.message.attachments.map(a => a)
+                            }).catch(console.error);
+                            collector.stop();
+                            return;
+                        }
+
+                        // Stop collector
+                        collector.stop();
+
+                        await i.update({
+                            content: `✅ Card confirmed and saved! (ID: ${nextId})`,
+                            components: [],
+                            files: i.message.attachments.map(a => a)
+                        }).catch(console.error);
+                    }
+                    // Handle cancel button
+                    else if (i.isButton() && i.customId === `cancel_card_${interaction.id}`) {
+                        collector.stop();
+
+                        await i.update({
+                            content: "❌ Card generation canceled.",
+                            components: [],
+                            files: i.message.attachments.map(a => a)
+                        }).catch(console.error);
+                    }
+                } catch (error) {
+                    console.error('Error handling card generation interaction:', error);
+                    try {
+                        await i.reply({
+                            content: '❌ An error occurred. Please try again.',
+                            ephemeral: true
+                        });
+                    } catch (e) {
+                        console.error('Failed to send error message:', e);
+                    }
+                }
+            });
+
+            collector.on('end', () => {
+                console.log('Card generation collector ended');
+            });
+
+        } catch (error) {
+            console.error('Error in generate command:', error);
             try {
-                await run(
-                    'INSERT INTO cards (id, edition, name, `set`, image, bordered_image, creator) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    [nextId, edition, data.name, set, croppedImagePath, borderedImagePath, state.author]
-                );
-                console.log(`Card saved to database with ID: ${nextId}`);
-            } catch (err) {
-                console.error('Failed to save card to database:', err);
-                await interaction.update({
-                    content: "❌ Card saved to files but failed to save to database. Check console for errors.",
-                    components: [],
-                    files: interaction.message.attachments.map(a => a)
-                });
-                return;
+                if (interaction.deferred || interaction.replied) {
+                    await interaction.editReply({
+                        content: '❌ An error occurred while generating the card.',
+                        ephemeral: true
+                    });
+                } else {
+                    await interaction.reply({
+                        content: '❌ An error occurred while generating the card.',
+                        ephemeral: true
+                    });
+                }
+            } catch (e) {
+                console.error('Failed to send error reply:', e);
             }
-
-            // Cleanup state
-            activeCards.delete(interaction.message.id);
-
-            await interaction.update({
-                content: `✅ Card confirmed and saved! (ID: ${nextId})`,
-                components: [],
-                files: interaction.message.attachments.map(a => a)
-            });
-        });
-
-        // Cancel button logic
-        client.on("interactionCreate", async interaction => {
-            if (!interaction.isButton()) return;
-            if (interaction.customId !== "cancel_card") return;
-
-            const state = activeCards.get(interaction.message.id);
-            if (!state) return;
-
-            if (interaction.user.id !== state.author) {
-                return interaction.reply({
-                content: "❌ This is not your card.",
-                ephemeral: true
-                });
-            }
-
-            // Cleanup state
-            activeCards.delete(interaction.message.id);
-
-            await interaction.update({
-                content: "❌ Card generation canceled.",
-                components: [],
-                files: interaction.message.attachments.map(a => a)
-            });
-        });
+        }
     },
     name: 'generate',
     description: 'Generate a card (admin only)',
@@ -288,7 +279,15 @@ module.exports = {
                 {
                     name: 'Christmas',
                     value: 2
-                }
+                },
+                {
+                    name: 'Gingerbread',
+                    value: 3
+                },
+                {
+                    name: 'Legends',
+                    value: 4
+                },
             ]
         },
         {
