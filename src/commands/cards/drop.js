@@ -52,7 +52,7 @@ module.exports = {
          * Pick a random set based on rarity (higher rarity = more common)
          */
         async function pickRandomSet() {
-            const sets = await all('SELECT id, name, border, rarity FROM sets');
+            const sets = await all('SELECT id, name, border, rarity FROM sets WHERE available = 1');
             
             if (sets.length === 0) {
                 throw new Error('No sets found in database');
