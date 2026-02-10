@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auctions Management - Discord Cards</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #ff006e;
+            --secondary: #8338ec;
+            --accent: #00f5ff;
+            --dark: #0a0e27;
+            --card-bg: rgba(15, 23, 42, 0.6);
+            --success: #00ff88;
+            --warning: #ffaa00;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background: var(--dark);
+            color: #fff;
+            min-height: 100vh;
+            position: relative;
+        }
+
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 50%, rgba(255, 0, 110, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(131, 56, 236, 0.15) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .navbar {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(131, 56, 236, 0.3);
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            z-index: 100;
+        }
+
+        .navbar h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--primary), var(--secondary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .navbar-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .btn {
+            padding: 10px 24px;
+            background: transparent;
+            border: 2px solid var(--secondary);
+            border-radius: 8px;
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn:hover {
+            background: var(--secondary);
+            box-shadow: 0 0 20px rgba(131, 56, 236, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-color: var(--primary);
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 0.9rem;
+        }
+
+        .btn-danger {
+            border-color: var(--primary);
+        }
+
+        .btn-danger:hover {
+            background: var(--primary);
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 10;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+
+        .page-header h2 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2.5rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .message {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--success);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: var(--success);
+            display: none;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .message.error {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        table {
+            width: 100%;
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            border-radius: 15px;
+            overflow: hidden;
+        }
+
+        thead {
+            background: rgba(131, 56, 236, 0.2);
+        }
+
+        th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 700;
+            color: var(--accent);
+            border-bottom: 1px solid rgba(131, 56, 236, 0.3);
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid rgba(131, 56, 236, 0.1);
+        }
+
+        tr:hover {
+            background: rgba(131, 56, 236, 0.1);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(131, 56, 236, 0.5);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 700px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .modal-header h3 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.8rem;
+            color: var(--accent);
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--primary);
+            font-size: 2rem;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            border-radius: 8px;
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1rem;
+        }
+
+        .card-search-group {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .card-search-group h4 {
+            color: var(--accent);
+            margin-bottom: 10px;
+        }
+
+        .search-input-container {
+            position: relative;
+        }
+
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: rgba(10, 14, 39, 0.95);
+            border: 1px solid rgba(131, 56, 236, 0.5);
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 10;
+            display: none;
+        }
+
+        .search-results.show {
+            display: block;
+        }
+
+        .search-result-item {
+            padding: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .search-result-item:hover {
+            background: rgba(131, 56, 236, 0.3);
+        }
+
+        .selected-card {
+            background: rgba(131, 56, 236, 0.2);
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .selected-card.show {
+            display: block;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .card-list {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .card-badge {
+            background: rgba(131, 56, 236, 0.3);
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 5px;
+            font-size: 0.85rem;
+            font-weight: 700;
+        }
+
+        .status-active {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .status-upcoming {
+            background: rgba(255, 170, 0, 0.2);
+            color: var(--warning);
+            border: 1px solid var(--warning);
+        }
+
+        .status-ended {
+            background: rgba(255, 0, 110, 0.2);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h1>AUCTIONS</h1>
+        <div class="navbar-right">
+            <a href="/dashboard" class="btn">Dashboard</a>
+            <a href="/admin/cards" class="btn">Cards</a>
+            <a href="/logout" class="btn btn-danger">Logout</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="page-header">
+            <h2>Manage Auctions</h2>
+            <button class="btn btn-primary" onclick="openModal('create-modal')">Create Auction</button>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Start Time</th>
+                    <th>End Time</th>
+                    <th>Cards</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <% auctions.forEach(function(auction) { 
+                    var now = new Date();
+                    var start = new Date(auction.starttime);
+                    var end = new Date(auction.endtime);
+                    var status = 'upcoming';
+                    if (now >= start && now <= end) status = 'active';
+                    else if (now > end) status = 'ended';
+                %>
+                <tr>
+                    <td><%= auction.id %></td>
+                    <td>
+                        <span class="status-badge status-<%= status %>">
+                            <%= status.toUpperCase() %>
+                        </span>
+                    </td>
+                    <td><%= new Date(auction.starttime).toLocaleString() %></td>
+                    <td><%= new Date(auction.endtime).toLocaleString() %></td>
+                    <td>
+                        <div class="card-list">
+                            <% if (auction.card1_name) { %>
+                            <span class="card-badge"><%= auction.card1_name %> #<%= auction.card1_print %></span>
+                            <% } %>
+                            <% if (auction.card2_name) { %>
+                            <span class="card-badge"><%= auction.card2_name %> #<%= auction.card2_print %></span>
+                            <% } %>
+                            <% if (auction.card3_name) { %>
+                            <span class="card-badge"><%= auction.card3_name %> #<%= auction.card3_print %></span>
+                            <% } %>
+                            <% if (auction.card4_name) { %>
+                            <span class="card-badge"><%= auction.card4_name %> #<%= auction.card4_print %></span>
+                            <% } %>
+                        </div>
+                    </td>
+                    <td>
+                        <button class="btn btn-small btn-danger" onclick='deleteAuction(<%= auction.id %>)'>Delete</button>
+                    </td>
+                </tr>
+                <% }); %>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Create Modal -->
+    <div id="create-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Auction</h3>
+                <button class="close-btn" onclick="closeModal('create-modal')">&times;</button>
+            </div>
+            <form onsubmit="handleCreate(event)">
+                <div class="form-group">
+                    <label>Start Time *</label>
+                    <input type="datetime-local" id="create-starttime" required>
+                </div>
+                <div class="form-group">
+                    <label>End Time *</label>
+                    <input type="datetime-local" id="create-endtime" required>
+                </div>
+
+                <div class="card-search-group">
+                    <h4>Card 1 *</h4>
+                    <div class="search-input-container">
+                        <input type="text" id="search-card1" placeholder="Search by card name or ID..." 
+                               oninput="searchCards(1)" onfocus="showSearchResults(1)">
+                        <input type="hidden" id="card1-id">
+                        <div id="search-results-1" class="search-results"></div>
+                    </div>
+                    <div id="selected-card-1" class="selected-card"></div>
+                </div>
+
+                <div class="card-search-group">
+                    <h4>Card 2 *</h4>
+                    <div class="search-input-container">
+                        <input type="text" id="search-card2" placeholder="Search by card name or ID..." 
+                               oninput="searchCards(2)" onfocus="showSearchResults(2)">
+                        <input type="hidden" id="card2-id">
+                        <div id="search-results-2" class="search-results"></div>
+                    </div>
+                    <div id="selected-card-2" class="selected-card"></div>
+                </div>
+
+                <div class="card-search-group">
+                    <h4>Card 3 *</h4>
+                    <div class="search-input-container">
+                        <input type="text" id="search-card3" placeholder="Search by card name or ID..." 
+                               oninput="searchCards(3)" onfocus="showSearchResults(3)">
+                        <input type="hidden" id="card3-id">
+                        <div id="search-results-3" class="search-results"></div>
+                    </div>
+                    <div id="selected-card-3" class="selected-card"></div>
+                </div>
+
+                <div class="card-search-group">
+                    <h4>Card 4 *</h4>
+                    <div class="search-input-container">
+                        <input type="text" id="search-card4" placeholder="Search by card name or ID..." 
+                               oninput="searchCards(4)" onfocus="showSearchResults(4)">
+                        <input type="hidden" id="card4-id">
+                        <div id="search-results-4" class="search-results"></div>
+                    </div>
+                    <div id="selected-card-4" class="selected-card"></div>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Create Auction</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Set default times on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            var now = new Date();
+            var threeHoursLater = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+            
+            // Format for datetime-local input
+            var formatDateTime = function(date) {
+                var year = date.getFullYear();
+                var month = String(date.getMonth() + 1).padStart(2, '0');
+                var day = String(date.getDate()).padStart(2, '0');
+                var hours = String(date.getHours()).padStart(2, '0');
+                var minutes = String(date.getMinutes()).padStart(2, '0');
+                return year + '-' + month + '-' + day + 'T' + hours + ':' + minutes;
+            };
+            
+            document.getElementById('create-starttime').value = formatDateTime(now);
+            document.getElementById('create-endtime').value = formatDateTime(threeHoursLater);
+        });
+
+        // Close search results when clicking outside
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.search-input-container')) {
+                for (var i = 1; i <= 4; i++) {
+                    document.getElementById('search-results-' + i).classList.remove('show');
+                }
+            }
+        });
+
+        function showMessage(text, isError) {
+            var message = document.getElementById('message');
+            message.textContent = text;
+            message.className = 'message show' + (isError ? ' error' : '');
+            setTimeout(function() {
+                message.className = 'message';
+            }, 5000);
+        }
+
+        function openModal(id) {
+            document.getElementById(id).classList.add('show');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('show');
+        }
+
+        function showSearchResults(cardNum) {
+            document.getElementById('search-results-' + cardNum).classList.add('show');
+        }
+
+        var searchTimeout;
+        function searchCards(cardNum) {
+            clearTimeout(searchTimeout);
+            
+            var query = document.getElementById('search-card' + cardNum).value;
+            if (query.length < 2) {
+                document.getElementById('search-results-' + cardNum).classList.remove('show');
+                return;
+            }
+
+            searchTimeout = setTimeout(function() {
+                fetch('/admin/auctions/search-cards?query=' + encodeURIComponent(query))
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        displaySearchResults(cardNum, data.cards);
+                    }
+                })
+                .catch(function(error) {
+                    console.error('Search error:', error);
+                });
+            }, 300);
+        }
+
+        function displaySearchResults(cardNum, cards) {
+            var resultsDiv = document.getElementById('search-results-' + cardNum);
+            
+            if (cards.length === 0) {
+                resultsDiv.innerHTML = '<div class="search-result-item">No cards found</div>';
+                resultsDiv.classList.add('show');
+                return;
+            }
+
+            resultsDiv.innerHTML = '';
+            cards.forEach(function(card) {
+                var item = document.createElement('div');
+                item.className = 'search-result-item';
+                item.textContent = card.name + ' E' + card.edition + ' - Print #' + card.print + ' (ID: ' + card.id + ')';
+                item.onclick = function() {
+                    selectCard(cardNum, card);
+                };
+                resultsDiv.appendChild(item);
+            });
+            resultsDiv.classList.add('show');
+        }
+
+        function selectCard(cardNum, card) {
+            document.getElementById('card' + cardNum + '-id').value = card.id;
+            document.getElementById('search-card' + cardNum).value = card.name + ' E' + card.edition + ' #' + card.print;
+            
+            var selectedDiv = document.getElementById('selected-card-' + cardNum);
+            selectedDiv.textContent = '✓ Selected: ' + card.name + ' Edition ' + card.edition + ' - Print #' + card.print;
+            selectedDiv.classList.add('show');
+            
+            document.getElementById('search-results-' + cardNum).classList.remove('show');
+        }
+
+        function handleCreate(event) {
+            event.preventDefault();
+            
+            var card1 = document.getElementById('card1-id').value;
+            var card2 = document.getElementById('card2-id').value;
+            var card3 = document.getElementById('card3-id').value;
+            var card4 = document.getElementById('card4-id').value;
+
+            if (!card1 || !card2 || !card3 || !card4) {
+                showMessage('All 4 cards are required', true);
+                return;
+            }
+
+            var formData = {
+                starttime: document.getElementById('create-starttime').value,
+                endtime: document.getElementById('create-endtime').value,
+                card1: card1,
+                card2: card2,
+                card3: card3,
+                card4: card4
+            };
+
+            fetch('/admin/auctions/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData)
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.success) {
+                    showMessage(result.message);
+                    closeModal('create-modal');
+                    setTimeout(function() { location.reload(); }, 1000);
+                } else {
+                    showMessage(result.error || 'Failed to create auction', true);
+                }
+            })
+            .catch(function(error) {
+                showMessage('An error occurred', true);
+            });
+        }
+
+        function deleteAuction(id) {
+            if (!confirm('Are you sure you want to delete this auction? Unsold cards will be removed from the database if the auction has ended.')) {
+                return;
+            }
+
+            fetch('/admin/auctions/' + id + '/delete', {
+                method: 'POST'
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.success) {
+                    showMessage(result.message);
+                    setTimeout(function() { location.reload(); }, 1000);
+                } else {
+                    showMessage(result.error || 'Delete failed', true);
+                }
+            })
+            .catch(function(error) {
+                showMessage('An error occurred', true);
+            });
+        }
+    </script>
+</body>
+</html>

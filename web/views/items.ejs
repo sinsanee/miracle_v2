@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Items Management - Discord Cards</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #ff006e;
+            --secondary: #8338ec;
+            --accent: #00f5ff;
+            --dark: #0a0e27;
+            --card-bg: rgba(15, 23, 42, 0.6);
+            --success: #00ff88;
+            --warning: #ffaa00;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background: var(--dark);
+            color: #fff;
+            min-height: 100vh;
+            position: relative;
+        }
+
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 50%, rgba(255, 0, 110, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(131, 56, 236, 0.15) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .navbar {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(131, 56, 236, 0.3);
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            z-index: 100;
+        }
+
+        .navbar h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--primary), var(--secondary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .navbar-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .btn {
+            padding: 10px 24px;
+            background: transparent;
+            border: 2px solid var(--secondary);
+            border-radius: 8px;
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn:hover {
+            background: var(--secondary);
+            box-shadow: 0 0 20px rgba(131, 56, 236, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-color: var(--primary);
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 0.9rem;
+        }
+
+        .btn-danger {
+            border-color: var(--primary);
+        }
+
+        .btn-danger:hover {
+            background: var(--primary);
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 10;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+
+        .page-header h2 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2.5rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .message {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--success);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: var(--success);
+            display: none;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .message.error {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .controls {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .controls-row {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .control-group input,
+        .control-group select {
+            width: 100%;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            border-radius: 8px;
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+        }
+
+        table {
+            width: 100%;
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            border-radius: 15px;
+            overflow: hidden;
+        }
+
+        thead {
+            background: rgba(131, 56, 236, 0.2);
+        }
+
+        th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 700;
+            color: var(--accent);
+            border-bottom: 1px solid rgba(131, 56, 236, 0.3);
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid rgba(131, 56, 236, 0.1);
+        }
+
+        tr:hover {
+            background: rgba(131, 56, 236, 0.1);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(131, 56, 236, 0.5);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .modal-header h3 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.8rem;
+            color: var(--accent);
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--primary);
+            font-size: 2rem;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            border-radius: 8px;
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1rem;
+        }
+
+        .form-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h1>ITEMS</h1>
+        <div class="navbar-right">
+            <a href="/dashboard" class="btn">Dashboard</a>
+            <a href="/admin/cards" class="btn">Cards</a>
+            <a href="/logout" class="btn btn-danger">Logout</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="page-header">
+            <h2>Manage Items</h2>
+            <button class="btn btn-primary" onclick="openModal('create-modal')">Create Item</button>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <div class="controls">
+            <div class="controls-row">
+                <div class="control-group">
+                    <label>Search</label>
+                    <input type="text" id="search-input" placeholder="Search by name or ID..." oninput="filterItems()">
+                </div>
+                <div class="control-group">
+                    <label>Sort By</label>
+                    <select id="sort-select" onchange="filterItems()">
+                        <option value="id-desc">ID (Newest First)</option>
+                        <option value="id-asc">ID (Oldest First)</option>
+                        <option value="name-asc">Name (A-Z)</option>
+                        <option value="name-desc">Name (Z-A)</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <button class="btn" onclick="resetFilters()" style="margin-top: 25px;">Reset Filters</button>
+                </div>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Description</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <% items.forEach(function(item) { %>
+                <tr class="item-row"
+                    data-id="<%= item.id %>"
+                    data-name="<%= (item.name || '').toLowerCase() %>">
+                    <td><%= item.id %></td>
+                    <td><strong><%= item.name %></strong></td>
+                    <td><%= item.description || '-' %></td>
+                    <td>
+                        <button class="btn btn-small" onclick='editItem(<%= item.id %>, "<%= item.name.replace(/"/g, "&quot;") %>", "<%= (item.description || "").replace(/"/g, "&quot;") %>")'>Edit</button>
+                        <button class="btn btn-small btn-danger" onclick='deleteItem(<%= item.id %>)'>Delete</button>
+                    </td>
+                </tr>
+                <% }); %>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Create Modal -->
+    <div id="create-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Item</h3>
+                <button class="close-btn" onclick="closeModal('create-modal')">&times;</button>
+            </div>
+            <form onsubmit="handleCreate(event)">
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" id="create-name" required>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="create-description" placeholder="Optional"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Create</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div id="edit-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Item</h3>
+                <button class="close-btn" onclick="closeModal('edit-modal')">&times;</button>
+            </div>
+            <form onsubmit="handleUpdate(event)">
+                <input type="hidden" id="edit-id">
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" id="edit-name" required>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="edit-description" placeholder="Optional"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Update</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function showMessage(text, isError) {
+            var message = document.getElementById('message');
+            message.textContent = text;
+            message.className = 'message show' + (isError ? ' error' : '');
+            setTimeout(function() {
+                message.className = 'message';
+            }, 5000);
+        }
+
+        function openModal(id) {
+            document.getElementById(id).classList.add('show');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('show');
+        }
+
+        function handleCreate(event) {
+            event.preventDefault();
+            
+            var formData = {
+                name: document.getElementById('create-name').value,
+                description: document.getElementById('create-description').value
+            };
+
+            fetch('/admin/items/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData)
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.success) {
+                    showMessage(result.message);
+                    closeModal('create-modal');
+                    setTimeout(function() { location.reload(); }, 1000);
+                } else {
+                    showMessage(result.error || 'Failed to create item', true);
+                }
+            })
+            .catch(function(error) {
+                showMessage('An error occurred', true);
+            });
+        }
+
+        function editItem(id, name, description) {
+            document.getElementById('edit-id').value = id;
+            document.getElementById('edit-name').value = name;
+            document.getElementById('edit-description').value = description;
+            openModal('edit-modal');
+        }
+
+        function handleUpdate(event) {
+            event.preventDefault();
+            
+            var id = document.getElementById('edit-id').value;
+            var formData = {
+                name: document.getElementById('edit-name').value,
+                description: document.getElementById('edit-description').value
+            };
+
+            fetch('/admin/items/' + id + '/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData)
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.success) {
+                    showMessage(result.message);
+                    closeModal('edit-modal');
+                    setTimeout(function() { location.reload(); }, 1000);
+                } else {
+                    showMessage(result.error || 'Update failed', true);
+                }
+            })
+            .catch(function(error) {
+                showMessage('An error occurred', true);
+            });
+        }
+
+        function deleteItem(id) {
+            if (!confirm('Are you sure you want to delete this item?')) {
+                return;
+            }
+
+            fetch('/admin/items/' + id + '/delete', {
+                method: 'POST'
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.success) {
+                    showMessage(result.message);
+                    setTimeout(function() { location.reload(); }, 1000);
+                } else {
+                    showMessage(result.error || 'Delete failed', true);
+                }
+            })
+            .catch(function(error) {
+                showMessage('An error occurred', true);
+            });
+        }
+
+        function filterItems() {
+            var searchTerm = document.getElementById('search-input').value.toLowerCase();
+            var sortBy = document.getElementById('sort-select').value;
+            
+            var tbody = document.querySelector('tbody');
+            var rows = Array.from(document.querySelectorAll('.item-row'));
+            
+            // Filter rows
+            rows.forEach(function(row) {
+                var id = row.getAttribute('data-id');
+                var name = row.getAttribute('data-name');
+                
+                var matchesSearch = id.includes(searchTerm) || name.includes(searchTerm);
+                
+                if (matchesSearch) {
+                    row.classList.remove('hidden');
+                } else {
+                    row.classList.add('hidden');
+                }
+            });
+            
+            // Sort visible rows
+            var visibleRows = rows.filter(function(row) {
+                return !row.classList.contains('hidden');
+            });
+            
+            visibleRows.sort(function(a, b) {
+                if (sortBy === 'id-asc') {
+                    return parseInt(a.getAttribute('data-id')) - parseInt(b.getAttribute('data-id'));
+                } else if (sortBy === 'id-desc') {
+                    return parseInt(b.getAttribute('data-id')) - parseInt(a.getAttribute('data-id'));
+                } else if (sortBy === 'name-asc') {
+                    return a.getAttribute('data-name').localeCompare(b.getAttribute('data-name'));
+                } else if (sortBy === 'name-desc') {
+                    return b.getAttribute('data-name').localeCompare(a.getAttribute('data-name'));
+                }
+                return 0;
+            });
+            
+            // Reorder in DOM
+            visibleRows.forEach(function(row) {
+                tbody.appendChild(row);
+            });
+            
+            // Show hidden rows at the end
+            rows.filter(function(row) {
+                return row.classList.contains('hidden');
+            }).forEach(function(row) {
+                tbody.appendChild(row);
+            });
+        }
+
+        function resetFilters() {
+            document.getElementById('search-input').value = '';
+            document.getElementById('sort-select').value = 'id-desc';
+            filterItems();
+        }
+    </script>
+</body>
+</html>

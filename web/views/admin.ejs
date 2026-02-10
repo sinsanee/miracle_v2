@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Discord Cards</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #ff006e;
+            --secondary: #8338ec;
+            --accent: #00f5ff;
+            --dark: #0a0e27;
+            --card-bg: rgba(15, 23, 42, 0.6);
+            --success: #00ff88;
+            --warning: #ffaa00;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background: var(--dark);
+            color: #fff;
+            min-height: 100vh;
+            position: relative;
+        }
+
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 50%, rgba(255, 0, 110, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(131, 56, 236, 0.15) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .navbar {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(131, 56, 236, 0.3);
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            z-index: 100;
+        }
+
+        .navbar h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--primary), var(--secondary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .navbar-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--accent);
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        .user-badge {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn {
+            padding: 10px 24px;
+            background: transparent;
+            border: 2px solid var(--secondary);
+            border-radius: 8px;
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn:hover {
+            background: var(--secondary);
+            box-shadow: 0 0 20px rgba(131, 56, 236, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            border-color: var(--primary);
+            font-size: 0.9rem;
+            padding: 8px 16px;
+        }
+
+        .btn-danger:hover {
+            background: var(--primary);
+            box-shadow: 0 0 20px rgba(255, 0, 110, 0.4);
+        }
+
+        .btn-warning {
+            border-color: var(--warning);
+            font-size: 0.9rem;
+            padding: 8px 16px;
+        }
+
+        .btn-warning:hover {
+            background: var(--warning);
+            box-shadow: 0 0 20px rgba(255, 170, 0, 0.4);
+        }
+
+        .btn-success {
+            border-color: var(--success);
+            font-size: 0.9rem;
+            padding: 8px 16px;
+        }
+
+        .btn-success:hover {
+            background: var(--success);
+            color: var(--dark);
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 10;
+        }
+
+        .admin-header {
+            text-align: center;
+            margin-bottom: 40px;
+            animation: slideDown 0.6s ease-out;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .admin-header h2 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2.5rem;
+            font-weight: 900;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .admin-header p {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 1.2rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            border-radius: 15px;
+            padding: 25px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.6);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .stat-value {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2.5rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--accent), #fff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .users-table-container {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            border-radius: 20px;
+            padding: 30px;
+            overflow-x: auto;
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            border-bottom: 2px solid rgba(131, 56, 236, 0.5);
+        }
+
+        th {
+            text-align: left;
+            padding: 15px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        td {
+            padding: 20px 15px;
+            border-bottom: 1px solid rgba(131, 56, 236, 0.2);
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        tr:hover {
+            background: rgba(131, 56, 236, 0.1);
+        }
+
+        .user-id {
+            font-family: 'Orbitron', sans-serif;
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .status-admin {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .status-banned {
+            background: rgba(255, 0, 110, 0.2);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+        }
+
+        .status-active {
+            background: rgba(0, 245, 255, 0.2);
+            color: var(--accent);
+            border: 1px solid var(--accent);
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .message {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--success);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: var(--success);
+            display: none;
+            animation: slideDown 0.3s ease-out;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .message.error {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .no-users {
+            text-align: center;
+            padding: 40px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 1.2rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <h1>ADMIN PANEL</h1>
+        <div class="navbar-right">
+            <div class="user-info">
+                <span>👤 <%= username %></span>
+                <span class="user-badge">Admin</span>
+            </div>
+            <a href="/dashboard" class="btn">Dashboard</a>
+            <a href="/logout" class="btn">Logout</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="admin-header">
+            <h2>User Management</h2>
+            <p>Manage Discord users and permissions</p>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Discord Users</div>
+                <div class="stat-value"><%= users.length %></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Active Users</div>
+                <div class="stat-value"><%= users.filter(u => u.banned === 0).length %></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Banned Users</div>
+                <div class="stat-value"><%= users.filter(u => u.banned === 1).length %></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">
+                    <a href="/admin/cards" style="color: inherit; text-decoration: none;">Manage Cards →</a>
+                </div>
+                <div class="stat-value" style="font-size: 1.5rem;">🎴</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">
+                    <a href="/admin/owned-cards" style="color: inherit; text-decoration: none;">Owned Cards →</a>
+                </div>
+                <div class="stat-value" style="font-size: 1.5rem;">📦</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">
+                    <a href="/admin/items" style="color: inherit; text-decoration: none;">Manage Items →</a>
+                </div>
+                <div class="stat-value" style="font-size: 1.5rem;">🎁</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">
+                    <a href="/admin/inventory" style="color: inherit; text-decoration: none;">Inventory →</a>
+                </div>
+                <div class="stat-value" style="font-size: 1.5rem;">🎒</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">
+                    <a href="/admin/auctions" style="color: inherit; text-decoration: none;">Auctions →</a>
+                </div>
+                <div class="stat-value" style="font-size: 1.5rem;">⚖️</div>
+            </div>
+        </div>
+
+        <div class="users-table-container">
+            <% if (users.length === 0) { %>
+                <div class="no-users">No users found</div>
+            <% } else { %>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Discord User ID</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% users.forEach(user => { %>
+                            <tr id="user-<%= user.userid %>">
+                                <td class="user-id"><%= user.userid %></td>
+                                <td>
+                                    <% if (user.banned === 1) { %>
+                                        <span class="status-badge status-banned">Banned</span>
+                                    <% } else { %>
+                                        <span class="status-badge status-active">Active</span>
+                                    <% } %>
+                                </td>
+                                <td>
+                                    <div class="actions">
+                                        <% if (user.banned === 0) { %>
+                                            <button class="btn btn-warning" onclick="banUser('<%= user.userid %>', true)">Ban</button>
+                                        <% } else { %>
+                                            <button class="btn btn-success" onclick="banUser('<%= user.userid %>', false)">Unban</button>
+                                        <% } %>
+                                        <button class="btn btn-danger" onclick="deleteUser('<%= user.userid %>', '<%= user.userid %>')">Delete</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        <% }); %>
+                    </tbody>
+                </table>
+            <% } %>
+        </div>
+    </div>
+
+    <script>
+        function showMessage(text, isError = false) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.textContent = text;
+            messageDiv.classList.remove('error');
+            if (isError) {
+                messageDiv.classList.add('error');
+            }
+            messageDiv.classList.add('show');
+            
+            setTimeout(() => {
+                messageDiv.classList.remove('show');
+            }, 3000);
+        }
+
+        async function banUser(userId, banned) {
+            if (!confirm(`Are you sure you want to ${banned ? 'ban' : 'unban'} this user?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/admin/ban-user', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, banned })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showMessage(`User ${banned ? 'banned' : 'unbanned'} successfully`);
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showMessage(data.error || 'Operation failed', true);
+                }
+            } catch (error) {
+                showMessage('An error occurred. Please try again.', true);
+            }
+        }
+
+        async function deleteUser(userId, username) {
+            if (!confirm(`Are you sure you want to DELETE user "${username}"? This action cannot be undone!`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/admin/delete-user', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showMessage('User deleted successfully');
+                    document.getElementById(`user-${userId}`).style.opacity = '0';
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showMessage(data.error || 'Delete failed', true);
+                }
+            } catch (error) {
+                showMessage('An error occurred. Please try again.', true);
+            }
+        }
+    </script>
+</body>
+</html>
