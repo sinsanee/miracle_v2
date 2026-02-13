@@ -2,8 +2,8 @@ const express = require('express');
 const session = require('express-session');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
-const Database = require('better-sqlite3');
 const path = require('path');
+require('./models/font'); // ← Make sure this is here!
 const multer = require('multer');
 const fs = require('fs').promises;
 const { cardGen } = require('./models/cardGen');
@@ -17,7 +17,7 @@ const PORT = 3000;
 // Multer configuration for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '../src/img/temp'));
+    cb(null, path.join(__dirname, 'public/uploads/cards'));
   },
   filename: (req, file, cb) => {
     cb(null, Date.now() + '-' + file.originalname);
@@ -26,7 +26,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB limit
+  limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
@@ -36,106 +36,51 @@ const upload = multer({
   }
 });
 
-// Database setup
-const db = new Database(path.join(__dirname, '../src/database/cards.sqlite3'));
+// MySQL Configuration
+const mysql = require('mysql2/promise');
+require('dotenv').config();
 
-// Initialize database tables if they don't exist
-db.exec(`
-  CREATE TABLE IF NOT EXISTS webusers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    admin INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
 
-  CREATE TABLE IF NOT EXISTS users (
-    userid TEXT PRIMARY KEY NOT NULL,
-    banned INTEGER DEFAULT 0
-  );
+// Helper functions for MySQL queries
+async function query(sql, params = []) {
+  if (params === undefined || params === null) {
+    params = [];
+  }
+  if (!Array.isArray(params)) {
+    params = [params];
+  }
+  
+  const [rows] = await pool.execute(sql, params);
+  return rows;
+}
 
-  CREATE TABLE IF NOT EXISTS sets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,
-    border TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS cards (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    edition INTEGER NOT NULL,
-    set_id INTEGER NOT NULL,
-    image TEXT,
-    bordered_image TEXT,
-    dropping INTEGER DEFAULT 1,
-    scheduled_drop DATETIME,
-    dropped INTEGER DEFAULT 0,
-    grabbed INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (set_id) REFERENCES sets(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS owned_cards (
-    id TEXT PRIMARY KEY NOT NULL,
-    card INTEGER NOT NULL,
-    print INTEGER NOT NULL,
-    dropper TEXT,
-    grabber TEXT,
-    owner TEXT,
-    condition INTEGER DEFAULT 100,
-    FOREIGN KEY (card) REFERENCES cards(id),
-    FOREIGN KEY (dropper) REFERENCES users(userid),
-    FOREIGN KEY (grabber) REFERENCES users(userid),
-    FOREIGN KEY (owner) REFERENCES users(userid)
-  );
-
-  CREATE TABLE IF NOT EXISTS items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS inventory (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    userid TEXT NOT NULL,
-    itemid INTEGER NOT NULL,
-    amount INTEGER DEFAULT 0,
-    FOREIGN KEY (userid) REFERENCES users(userid),
-    FOREIGN KEY (itemid) REFERENCES items(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS auctions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    starttime DATETIME NOT NULL,
-    endtime DATETIME NOT NULL,
-    card1 INTEGER,
-    card2 INTEGER,
-    card3 INTEGER,
-    card4 INTEGER,
-    currentbid1 REAL DEFAULT 0,
-    currentbid2 REAL DEFAULT 0,
-    currentbid3 REAL DEFAULT 0,
-    currentbid4 REAL DEFAULT 0,
-    FOREIGN KEY (card1) REFERENCES owned_cards(id),
-    FOREIGN KEY (card2) REFERENCES owned_cards(id),
-    FOREIGN KEY (card3) REFERENCES owned_cards(id),
-    FOREIGN KEY (card4) REFERENCES owned_cards(id)
-  );
-`);
+async function queryOne(sql, params = []) {
+  const rows = await query(sql, params);
+  return rows[0] || null;
+}
 
 // Middleware
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/cards', express.static(path.join(__dirname, '../src/img/cards')));
+app.use('/cards/images', express.static(path.join(__dirname, 'public/uploads/cards')));
+app.use('/cards/borders', express.static(path.join(__dirname, 'public/uploads/borders')));
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 app.use(session({
-  secret: 'your-secret-key-change-this-in-production',
+  secret: 'CRAZYARBUZ22!2',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false } // Set to true if using HTTPS
+  cookie: { secure: false }
 }));
 
 // Middleware to check if user is logged in
@@ -174,12 +119,11 @@ app.post('/register', async (req, res) => {
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-    const stmt = db.prepare('INSERT INTO webusers (username, password) VALUES (?, ?)');
-    const result = stmt.run(username, hashedPassword);
+    await query('INSERT INTO webusers (username, password) VALUES (?, ?)', [username, hashedPassword]);
     
     res.json({ success: true, message: 'Registration successful! Please login.' });
   } catch (error) {
-    if (error.message.includes('UNIQUE constraint failed')) {
+    if (error.code === 'ER_DUP_ENTRY') {
       res.status(400).json({ error: 'Username already exists' });
     } else {
       res.status(500).json({ error: 'Registration failed' });
@@ -195,8 +139,7 @@ app.post('/login', async (req, res) => {
   }
 
   try {
-    const stmt = db.prepare('SELECT * FROM webusers WHERE username = ?');
-    const user = stmt.get(username);
+    const user = await queryOne('SELECT * FROM webusers WHERE username = ?', [username]);
     
     if (!user) {
       return res.status(401).json({ error: 'Invalid username or password' });
@@ -218,6 +161,7 @@ app.post('/login', async (req, res) => {
     
     res.json({ success: true, redirect: '/dashboard' });
   } catch (error) {
+    console.error('Login error:', error);
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -229,34 +173,36 @@ app.get('/dashboard', isAuthenticated, (req, res) => {
   });
 });
 
-app.get('/admin', isAdmin, (req, res) => {
-  const stmt = db.prepare('SELECT userid, banned FROM users ORDER BY userid DESC');
-  const discordUsers = stmt.all();
-  
-  res.render('admin', {
-    username: req.session.username,
-    users: discordUsers
-  });
+app.get('/admin', isAdmin, async (req, res) => {
+  try {
+    const discordUsers = await query('SELECT userid, banned FROM users ORDER BY userid DESC');
+    
+    res.render('admin', {
+      username: req.session.username,
+      users: discordUsers
+    });
+  } catch (error) {
+    console.error('Admin page error:', error);
+    res.status(500).send('Error loading admin page');
+  }
 });
 
-app.post('/admin/ban-user', isAdmin, (req, res) => {
+app.post('/admin/ban-user', isAdmin, async (req, res) => {
   const { userId, banned } = req.body;
   
   try {
-    const stmt = db.prepare('UPDATE users SET banned = ? WHERE userid = ?');
-    stmt.run(banned ? 1 : 0, userId);
+    await query('UPDATE users SET banned = ? WHERE userid = ?', [banned ? 1 : 0, userId]);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update user' });
   }
 });
 
-app.post('/admin/delete-user', isAdmin, (req, res) => {
+app.post('/admin/delete-user', isAdmin, async (req, res) => {
   const { userId } = req.body;
   
   try {
-    const stmt = db.prepare('DELETE FROM users WHERE userid = ?');
-    stmt.run(userId);
+    await query('DELETE FROM users WHERE userid = ?', [userId]);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete user' });
@@ -264,49 +210,73 @@ app.post('/admin/delete-user', isAdmin, (req, res) => {
 });
 
 // Card Management Routes
-app.get('/admin/cards', isAdmin, (req, res) => {
-  const cardsStmt = db.prepare(`
-    SELECT cards.*, sets.name as set_name 
-    FROM cards 
-    LEFT JOIN sets ON cards.set_id = sets.id 
-    ORDER BY cards.id DESC
-  `);
-  const cards = cardsStmt.all();
-  
-  const setsStmt = db.prepare('SELECT * FROM sets ORDER BY name ASC');
-  const sets = setsStmt.all();
-  
-  res.render('cards', {
-    username: req.session.username,
-    cards: cards,
-    sets: sets
-  });
+app.get('/admin/cards', isAdmin, async (req, res) => {
+  try {
+    const cards = await query(`
+      SELECT cards.*, sets.name as set_name
+      FROM cards
+      LEFT JOIN sets ON cards.set_id = sets.id
+      ORDER BY cards.id DESC
+    `);
+    
+    const sets = await query('SELECT id, name FROM sets ORDER BY name ASC');
+    
+    res.render('cards', {
+      username: req.session.username,
+      cards: cards,
+      sets: sets
+    });
+  } catch (error) {
+    console.error('Cards page error:', error);
+    res.status(500).send('Error loading cards page');
+  }
 });
 
-app.get('/admin/cards/data', isAdmin, (req, res) => {
+app.get('/admin/cards/data', isAdmin, async (req, res) => {
   try {
-    const setsStmt = db.prepare('SELECT * FROM sets ORDER BY name ASC');
-    const sets = setsStmt.all();
+    const sets = await query('SELECT id, name FROM sets ORDER BY name ASC');
     
-    // Get all unique editions for each card name
-    const editionsStmt = db.prepare(`
-      SELECT name, MAX(edition) as max_edition 
-      FROM cards 
-      GROUP BY name
-    `);
-    const editions = editionsStmt.all();
+    const cards = await query('SELECT name, MAX(edition) as max_edition FROM cards GROUP BY name');
+    const editionsData = {};
+    cards.forEach(card => {
+      editionsData[card.name] = card.max_edition;
+    });
     
-    res.json({ sets, editions });
+    res.json({ sets: sets, editions: editionsData });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch data' });
+    res.status(500).json({ error: 'Failed to load data' });
+  }
+});
+
+app.post('/admin/cards/create', isAdmin, async (req, res) => {
+  const { name, edition, set_id, set_name, image, dropping, scheduled_drop } = req.body;
+  
+  try {
+    let finalSetId = set_id;
+    
+    if (set_name && !set_id) {
+      const result = await query('INSERT INTO sets (name) VALUES (?)', [set_name]);
+      finalSetId = result.insertId;
+    }
+    
+    await query(`
+      INSERT INTO cards (name, edition, set_id, image, dropping, scheduled_drop) 
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [name, edition, finalSetId, image || null, dropping, scheduled_drop || null]);
+    
+    res.json({ success: true, message: 'Card created successfully' });
+  } catch (error) {
+    console.error('Card creation error:', error);
+    res.status(500).json({ error: 'Failed to create card: ' + error.message });
   }
 });
 
 app.post('/admin/cards/preview', isAdmin, upload.single('image'), async (req, res) => {
   try {
-    const { name, subtitle, footer, cropMode, imageUrl } = req.body;
-    
+    const { name, subtitle, footer, cropMode, imageUrl, setId } = req.body;
     let imageBuffer;
+
+    // Get image buffer from upload or URL
     if (req.file) {
       imageBuffer = await fs.readFile(req.file.path);
     } else if (imageUrl) {
@@ -315,109 +285,118 @@ app.post('/admin/cards/preview', isAdmin, upload.single('image'), async (req, re
       return res.status(400).json({ error: 'No image provided' });
     }
 
-    // Read the default border
-    const borderPath = path.join(__dirname, 'assets', 'border.png');
-    const border = await fs.readFile(borderPath);
+    // Get border path
+    let borderPath;
+    if (setId) {
+      const setData = await queryOne('SELECT border FROM sets WHERE id = ?', [setId]);
+      if (setData && setData.border) {
+        // FIXED: Use correct path relative to server.js location
+        borderPath = path.join(__dirname, 'public/uploads/borders', setData.border);
+      }
+    }
+    
+    // Fallback to default border
+    if (!borderPath) {
+      // FIXED: Use correct path to default border
+      borderPath = path.join(__dirname, 'assets', 'border.png');
+    }
 
-    // Generate preview
-    const previewBuffer = await cardGen(imageBuffer, {
+    // Check if border file exists
+    let border;
+    try {
+      border = await fs.readFile(borderPath);
+    } catch (error) {
+      console.error('Border not found at:', borderPath);
+      // Try alternative location
+      const altBorderPath = path.join(__dirname, 'public', 'border.png');
+      try {
+        border = await fs.readFile(altBorderPath);
+      } catch (altError) {
+        console.error('Alternative border not found at:', altBorderPath);
+        return res.status(500).json({ error: 'Border image not found. Please upload borders to public/uploads/borders/' });
+      }
+    }
+
+    // Generate card preview
+    const cardBuffer = await cardGen(imageBuffer, {
       name: name || 'Card Name',
-      subtitle: subtitle || '',
-      footer: footer || ''
+      subtitle: '',
+      footer: ''
     }, cropMode || 'centre', border);
 
-    // Convert to base64
-    const base64Image = previewBuffer.toString('base64');
-    const dataUrl = `data:image/png;base64,${base64Image}`;
-
-    // Clean up temp file if uploaded
+    // Clean up uploaded file
     if (req.file) {
       await fs.unlink(req.file.path).catch(() => {});
     }
 
-    res.json({ success: true, preview: dataUrl });
+    // Return base64 encoded preview
+    res.json({ 
+      success: true, 
+      preview: `data:image/png;base64,${cardBuffer.toString('base64')}` 
+    });
   } catch (error) {
     console.error('Preview error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ error: 'Failed to generate preview: ' + error.message });
   }
 });
 
-app.post('/admin/cards/create', isAdmin, upload.single('image'), async (req, res) => {
+
+app.post('/admin/cards/create-with-image', isAdmin, upload.single('image'), async (req, res) => {
   try {
     const { name, edition, set_id, set_name, imageUrl, cropMode, dropping, scheduled_drop } = req.body;
-    
-    if (!name || !edition) {
-      return res.status(400).json({ error: 'Name and edition are required' });
-    }
-
     let imageBuffer;
+    let rawImageFilename = null;
+
     if (req.file) {
       imageBuffer = await fs.readFile(req.file.path);
+      
+      // Save the raw image to permanent location
+      rawImageFilename = `raw_${Date.now()}_${req.file.originalname}`;
+      const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
+      await fs.copyFile(req.file.path, rawImagePath);
+      
     } else if (imageUrl) {
       imageBuffer = await resolveImageBuffer(imageUrl);
+      rawImageFilename = imageUrl; // Store the URL as reference
     } else {
       return res.status(400).json({ error: 'No image provided' });
     }
 
     let finalSetId = set_id;
     
-    // If creating a new set
     if (set_name && !set_id) {
-      const setStmt = db.prepare('INSERT INTO sets (name) VALUES (?)');
-      const result = setStmt.run(set_name);
-      finalSetId = result.lastInsertRowid;
+      const result = await query('INSERT INTO sets (name) VALUES (?)', [set_name]);
+      finalSetId = result.insertId;
     }
 
-    // Get set info including border
-    const setStmt = db.prepare('SELECT name, border FROM sets WHERE id = ?');
-    const setData = setStmt.get(finalSetId);
+    const setData = await queryOne('SELECT name, border FROM sets WHERE id = ?', [finalSetId]);
 
-    // Crop the image first and save it
-    const croppedBuffer = await cropImage(imageBuffer, cropMode || 'centre');
-    const croppedFilename = `${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${edition}_${Date.now()}_cropped.png`;
-    const croppedPath = path.join(__dirname, '../src/img/cards', croppedFilename);
-    await fs.writeFile(croppedPath, croppedBuffer);
-
-    // Get border path
     let borderPath;
     if (setData.border) {
-      borderPath = setData.border
+      borderPath = path.join(__dirname, 'public/uploads/borders', setData.border);
     } else {
       borderPath = path.join(__dirname, 'assets', 'border.png');
     }
     const border = await fs.readFile(borderPath);
 
-    // Generate card with border using cropped image
-    const cardBuffer = await cardGen(croppedBuffer, {
+    const cardBuffer = await cardGen(imageBuffer, {
       name: name,
       subtitle: ``,
       footer: ''
     }, cropMode || 'centre', border);
 
-    // Save bordered card
     const cardFilename = `${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${edition}_${Date.now()}.png`;
-    const cardPath = path.join(__dirname, '../src/img/cards', cardFilename);
+    const cardPath = path.join(__dirname, 'public/uploads/cards', cardFilename);
     await fs.writeFile(cardPath, cardBuffer);
 
-    // Insert into database - save cropped image filename, not URL
-    const stmt = db.prepare(`
+    await query(`
       INSERT INTO cards (name, edition, set_id, image, bordered_image, dropping, scheduled_drop) 
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    stmt.run(
-      name, 
-      edition, 
-      finalSetId, 
-      croppedFilename,  // Save the cropped image filename instead of URL
-      cardFilename,
-      dropping, 
-      scheduled_drop || null
-    );
+    `, [name, edition, finalSetId, rawImageFilename, cardFilename, dropping, scheduled_drop || null]);
 
-    // Clean up temp file if uploaded
     if (req.file) {
-      await fs.unlink(req.file.path).catch(() => {});
+      await fs.unlink(req.file.path).catch(() => {}); // Clean up temp file after copying
     }
 
     res.json({ success: true, message: 'Card created successfully with image' });
@@ -427,93 +406,56 @@ app.post('/admin/cards/create', isAdmin, upload.single('image'), async (req, res
   }
 });
 
-// Bulk create cards
 app.post('/admin/cards/bulk-create', isAdmin, upload.array('images', 50), async (req, res) => {
   try {
-    const { set_id, set_name, dropping, scheduled_drop, cardsData, imageUrls, cropModes } = req.body;
+    const { set_id, set_name, cropMode, dropping, scheduled_drop, cardsData } = req.body;
     const cards = JSON.parse(cardsData);
-    const urls = imageUrls ? JSON.parse(imageUrls) : [];
-    const crops = cropModes ? JSON.parse(cropModes) : [];
     
     let finalSetId = set_id;
     
-    // If creating a new set
     if (set_name && !set_id) {
-      const setStmt = db.prepare('INSERT INTO sets (name) VALUES (?)');
-      const result = setStmt.run(set_name);
-      finalSetId = result.lastInsertRowid;
+      const result = await query('INSERT INTO sets (name) VALUES (?)', [set_name]);
+      finalSetId = result.insertId;
     }
 
-    // Get set info including border
-    const setStmt = db.prepare('SELECT name, border FROM sets WHERE id = ?');
-    const setData = setStmt.get(finalSetId);
+    const setData = await queryOne('SELECT name, border FROM sets WHERE id = ?', [finalSetId]);
 
-    // Get border path
     let borderPath;
     if (setData.border) {
-      borderPath = setData.border;
+      borderPath = path.join(__dirname, 'public/uploads/borders', setData.border);
     } else {
       borderPath = path.join(__dirname, 'assets', 'border.png');
     }
     const border = await fs.readFile(borderPath);
 
-    const stmt = db.prepare(`
-      INSERT INTO cards (name, edition, set_id, image, bordered_image, dropping, scheduled_drop) 
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
     let created = 0;
-    for (let i = 0; i < cards.length; i++) {
+    for (let i = 0; i < cards.length && i < req.files.length; i++) {
       const card = cards[i];
-      let imageBuffer;
+      const file = req.files[i];
 
-      // Check if this card uses a URL or file upload
-      if (urls[i] && urls[i].trim()) {
-        // Download from URL
-        imageBuffer = await resolveImageBuffer(urls[i]);
-      } else if (req.files[i]) {
-        // Read from uploaded file
-        imageBuffer = await fs.readFile(req.files[i].path);
-      } else {
-        console.warn(`Skipping card ${i}: no image provided`);
-        continue;
-      }
+      const imageBuffer = await fs.readFile(file.path);
+      
+      // Save raw image
+      const rawImageFilename = `raw_${Date.now()}_${i}_${file.originalname}`;
+      const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
+      await fs.copyFile(file.path, rawImagePath);
 
-      // Use per-card crop mode if available, otherwise use default
-      const cardCropMode = crops[i] || 'centre';
-
-      // Crop the image first and save it
-      const croppedBuffer = await cropImage(imageBuffer, cardCropMode);
-      const croppedFilename = `${card.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${card.edition}_${Date.now()}_${i}_cropped.png`;
-      const croppedPath = path.join(__dirname, '../src/img/cards', croppedFilename);
-      await fs.writeFile(croppedPath, croppedBuffer);
-
-      // Generate bordered card using cropped image
-      const cardBuffer = await cardGen(croppedBuffer, {
+      const cardBuffer = await cardGen(imageBuffer, {
         name: card.name,
         subtitle: ``,
         footer: ''
-      }, cardCropMode, border);
+      }, cropMode || 'centre', border);
 
-      // Save bordered card
       const cardFilename = `${card.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${card.edition}_${Date.now()}_${i}.png`;
-      const cardPath = path.join(__dirname, '../src/img/cards', cardFilename);
+      const cardPath = path.join(__dirname, 'public/uploads/cards', cardFilename);
       await fs.writeFile(cardPath, cardBuffer);
 
-      stmt.run(
-        card.name,
-        card.edition,
-        finalSetId,
-        croppedFilename,  // Save the cropped image filename
-        cardFilename,
-        dropping,
-        scheduled_drop || null
-      );
+      await query(`
+        INSERT INTO cards (name, edition, set_id, image, bordered_image, dropping, scheduled_drop) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [card.name, card.edition, finalSetId, rawImageFilename, cardFilename, dropping, scheduled_drop || null]);
 
-      // Clean up temp file if it was uploaded
-      if (req.files[i]) {
-        await fs.unlink(req.files[i].path).catch(() => {});
-      }
+      await fs.unlink(file.path).catch(() => {}); // Clean up temp file
       created++;
     }
 
@@ -524,54 +466,31 @@ app.post('/admin/cards/bulk-create', isAdmin, upload.array('images', 50), async 
   }
 });
 
-app.get('/admin/cards/:id', isAdmin, (req, res) => {
+app.get('/admin/cards/:id', isAdmin, async (req, res) => {
   try {
-    const stmt = db.prepare(`
-      SELECT cards.*, sets.name as set_name 
-      FROM cards 
-      LEFT JOIN sets ON cards.set_id = sets.id 
-      WHERE cards.id = ?
-    `);
-    const card = stmt.get(req.params.id);
-    
-    if (!card) {
-      return res.status(404).json({ error: 'Card not found' });
-    }
-    
+    const card = await queryOne('SELECT * FROM cards WHERE id = ?', [req.params.id]);
     res.json(card);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch card' });
+    res.status(500).json({ error: 'Failed to load card' });
   }
 });
 
-app.post('/admin/cards/:id/update', isAdmin, (req, res) => {
+app.post('/admin/cards/:id/update', isAdmin, async (req, res) => {
   const { name, edition, set_id, set_name, image, dropping, scheduled_drop } = req.body;
   
   try {
     let finalSetId = set_id;
     
-    // If creating a new set
     if (set_name && !set_id) {
-      const setStmt = db.prepare('INSERT INTO sets (name) VALUES (?)');
-      const result = setStmt.run(set_name);
-      finalSetId = result.lastInsertRowid;
+      const result = await query('INSERT INTO sets (name) VALUES (?)', [set_name]);
+      finalSetId = result.insertId;
     }
     
-    const stmt = db.prepare(`
+    await query(`
       UPDATE cards 
       SET name = ?, edition = ?, set_id = ?, image = ?, dropping = ?, scheduled_drop = ? 
       WHERE id = ?
-    `);
-    
-    stmt.run(
-      name, 
-      edition, 
-      finalSetId, 
-      image || null, 
-      dropping, 
-      scheduled_drop || null,
-      req.params.id
-    );
+    `, [name, edition, finalSetId, image || null, dropping, scheduled_drop || null, req.params.id]);
     
     res.json({ success: true, message: 'Card updated successfully' });
   } catch (error) {
@@ -579,34 +498,22 @@ app.post('/admin/cards/:id/update', isAdmin, (req, res) => {
   }
 });
 
-// Update card info without regenerating image
 app.post('/admin/cards/:id/update-info', isAdmin, upload.single('image'), async (req, res) => {
   try {
     const { name, edition, set_id, set_name, dropping, scheduled_drop } = req.body;
     
     let finalSetId = set_id;
     
-    // If creating a new set
     if (set_name && !set_id) {
-      const setStmt = db.prepare('INSERT INTO sets (name) VALUES (?)');
-      const result = setStmt.run(set_name);
-      finalSetId = result.lastInsertRowid;
+      const result = await query('INSERT INTO sets (name) VALUES (?)', [set_name]);
+      finalSetId = result.insertId;
     }
     
-    const stmt = db.prepare(`
+    await query(`
       UPDATE cards 
       SET name = ?, edition = ?, set_id = ?, dropping = ?, scheduled_drop = ? 
       WHERE id = ?
-    `);
-    
-    stmt.run(
-      name, 
-      edition, 
-      finalSetId, 
-      dropping, 
-      scheduled_drop || null,
-      req.params.id
-    );
+    `, [name, edition, finalSetId, dropping, scheduled_drop || null, req.params.id]);
     
     res.json({ success: true, message: 'Card updated successfully' });
   } catch (error) {
@@ -614,45 +521,33 @@ app.post('/admin/cards/:id/update-info', isAdmin, upload.single('image'), async 
   }
 });
 
-app.post('/admin/cards/:id/update-stats', isAdmin, (req, res) => {
+app.post('/admin/cards/:id/update-stats', isAdmin, async (req, res) => {
   const { dropped, grabbed } = req.body;
   
   try {
-    const stmt = db.prepare('UPDATE cards SET dropped = ?, grabbed = ? WHERE id = ?');
-    stmt.run(dropped, grabbed, req.params.id);
+    await query('UPDATE cards SET dropped = ?, grabbed = ? WHERE id = ?', [dropped, grabbed, req.params.id]);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update stats' });
   }
 });
 
-app.post('/admin/cards/:id/delete', isAdmin, (req, res) => {
+app.post('/admin/cards/:id/delete', isAdmin, async (req, res) => {
   try {
-    const stmt = db.prepare('DELETE FROM cards WHERE id = ?');
-    stmt.run(req.params.id);
+    await query('DELETE FROM cards WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Card deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete card' });
   }
 });
 
-app.post('/admin/cards/:id/delete-copies', isAdmin, (req, res) => {
+app.post('/admin/cards/:id/delete-copies', isAdmin, async (req, res) => {
   try {
-    // Get card info first
-    const cardStmt = db.prepare('SELECT edition, set_id FROM cards WHERE id = ?');
-    const card = cardStmt.get(req.params.id);
-    
-    if (!card) {
-      return res.status(404).json({ error: 'Card not found' });
-    }
-    
-    // Delete all owned copies matching this card
-    const stmt = db.prepare('DELETE FROM owned_cards WHERE card = ?');
-    const result = stmt.run(req.params.id);
+    const result = await query('DELETE FROM owned_cards WHERE card = ?', [req.params.id]);
     
     res.json({ 
       success: true, 
-      message: `Deleted ${result.changes} owned copies` 
+      message: `Deleted ${result.affectedRows} owned copies` 
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete copies' });
@@ -660,85 +555,80 @@ app.post('/admin/cards/:id/delete-copies', isAdmin, (req, res) => {
 });
 
 // Owned Cards Management
-app.get('/admin/owned-cards', isAdmin, (req, res) => {
-  const stmt = db.prepare(`
-    SELECT owned_cards.*, cards.name as card_name, cards.edition, sets.name as set_name
-    FROM owned_cards
-    LEFT JOIN cards ON owned_cards.card = cards.id
-    LEFT JOIN sets ON cards.set_id = sets.id
-    ORDER BY owned_cards.id DESC
-  `);
-  const ownedCards = stmt.all();
-  
-  const cardsStmt = db.prepare(`
-    SELECT cards.id, cards.name, cards.edition, sets.name as set_name
-    FROM cards
-    LEFT JOIN sets ON cards.set_id = sets.id
-    ORDER BY cards.name ASC
-  `);
-  const cards = cardsStmt.all();
-  
-  res.render('owned-cards', {
-    username: req.session.username,
-    ownedCards: ownedCards,
-    cards: cards
-  });
+app.get('/admin/owned-cards', isAdmin, async (req, res) => {
+  try {
+    const ownedCards = await query(`
+      SELECT owned_cards.*, cards.name as card_name, cards.edition, sets.name as set_name
+      FROM owned_cards
+      LEFT JOIN cards ON owned_cards.card = cards.id
+      LEFT JOIN sets ON cards.set_id = sets.id
+      ORDER BY owned_cards.id DESC
+    `);
+    
+    const cards = await query(`
+      SELECT cards.id, cards.name, cards.edition, sets.name as set_name
+      FROM cards
+      LEFT JOIN sets ON cards.set_id = sets.id
+      ORDER BY cards.name ASC
+    `);
+    
+    res.render('owned-cards', {
+      username: req.session.username,
+      ownedCards: ownedCards,
+      cards: cards
+    });
+  } catch (error) {
+    console.error('Owned cards page error:', error);
+    res.status(500).send('Error loading owned cards page');
+  }
 });
 
-app.post('/admin/owned-cards/generate', isAdmin, (req, res) => {
+app.post('/admin/owned-cards/generate', isAdmin, async (req, res) => {
   const { card_id, owner, dropper, grabber, condition } = req.body;
   
   try {
-    // Get the card details
-    const cardStmt = db.prepare('SELECT * FROM cards WHERE id = ?');
-    const card = cardStmt.get(card_id);
+    const card = await queryOne('SELECT * FROM cards WHERE id = ?', [card_id]);
     
     if (!card) {
       return res.status(404).json({ error: 'Card not found' });
     }
     
-    // Get the current print number for this card
-    const printStmt = db.prepare('SELECT COUNT(*) as count FROM owned_cards WHERE card = ?');
-    const printResult = printStmt.get(card_id);
+    const printResult = await queryOne('SELECT COUNT(*) as count FROM owned_cards WHERE card = ?', [card_id]);
     const print = (printResult.count || 0) + 1;
     
-    // Generate unique ID using the generateId model
-    const id = generateUniqueId(db);
+    const id = generateUniqueId({ prepare: (sql) => ({ get: async (params) => await queryOne(sql, params) }) });
     
-    const stmt = db.prepare(`
+    await query(`
       INSERT INTO owned_cards (id, card, print, dropper, grabber, owner, condition)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    stmt.run(id, card_id, print, dropper || null, grabber || null, owner || null, condition || 100);
+    `, [id, card_id, print, dropper || null, grabber || null, owner || null, condition || 100]);
     
     res.json({ success: true, message: 'Owned card generated successfully', id: id, print: print });
   } catch (error) {
+    console.error('Owned card generation error:', error);
     res.status(500).json({ error: 'Failed to generate owned card: ' + error.message });
   }
 });
 
-app.post('/admin/owned-cards/:id/update', isAdmin, (req, res) => {
+app.post('/admin/owned-cards/:id/update', isAdmin, async (req, res) => {
   const { dropper, grabber, owner, condition } = req.body;
   
   try {
-    const stmt = db.prepare(`
+    await query(`
       UPDATE owned_cards 
       SET dropper = ?, grabber = ?, owner = ?, condition = ?
       WHERE id = ?
-    `);
+    `, [dropper || null, grabber || null, owner || null, condition, req.params.id]);
     
-    stmt.run(dropper || null, grabber || null, owner || null, condition, req.params.id);
     res.json({ success: true, message: 'Owned card updated successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update owned card: ' + error.message });
+    res.status(500).json({ error: 'Failed to update owned card' });
   }
 });
 
-app.post('/admin/owned-cards/:id/delete', isAdmin, (req, res) => {
+app.post('/admin/owned-cards/:id/delete', isAdmin, async (req, res) => {
   try {
-    const stmt = db.prepare('DELETE FROM owned_cards WHERE id = ?');
-    stmt.run(req.params.id);
+    await query('DELETE FROM owned_cards WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Owned card deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete owned card' });
@@ -746,44 +636,45 @@ app.post('/admin/owned-cards/:id/delete', isAdmin, (req, res) => {
 });
 
 // Items Management
-app.get('/admin/items', isAdmin, (req, res) => {
-  const stmt = db.prepare('SELECT * FROM items ORDER BY id DESC');
-  const items = stmt.all();
-  
-  res.render('items', {
-    username: req.session.username,
-    items: items
-  });
+app.get('/admin/items', isAdmin, async (req, res) => {
+  try {
+    const items = await query('SELECT * FROM items ORDER BY id DESC');
+    
+    res.render('items', {
+      username: req.session.username,
+      items: items
+    });
+  } catch (error) {
+    console.error('Items page error:', error);
+    res.status(500).send('Error loading items page');
+  }
 });
 
-app.post('/admin/items/create', isAdmin, (req, res) => {
+app.post('/admin/items/create', isAdmin, async (req, res) => {
   const { name, description } = req.body;
   
   try {
-    const stmt = db.prepare('INSERT INTO items (name, description) VALUES (?, ?)');
-    stmt.run(name, description || '');
+    await query('INSERT INTO items (name, description) VALUES (?, ?)', [name, description || null]);
     res.json({ success: true, message: 'Item created successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create item: ' + error.message });
+    res.status(500).json({ error: 'Failed to create item' });
   }
 });
 
-app.post('/admin/items/:id/update', isAdmin, (req, res) => {
+app.post('/admin/items/:id/update', isAdmin, async (req, res) => {
   const { name, description } = req.body;
   
   try {
-    const stmt = db.prepare('UPDATE items SET name = ?, description = ? WHERE id = ?');
-    stmt.run(name, description || '', req.params.id);
+    await query('UPDATE items SET name = ?, description = ? WHERE id = ?', [name, description || null, req.params.id]);
     res.json({ success: true, message: 'Item updated successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update item: ' + error.message });
+    res.status(500).json({ error: 'Failed to update item' });
   }
 });
 
-app.post('/admin/items/:id/delete', isAdmin, (req, res) => {
+app.post('/admin/items/:id/delete', isAdmin, async (req, res) => {
   try {
-    const stmt = db.prepare('DELETE FROM items WHERE id = ?');
-    stmt.run(req.params.id);
+    await query('DELETE FROM items WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Item deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete item' });
@@ -791,171 +682,164 @@ app.post('/admin/items/:id/delete', isAdmin, (req, res) => {
 });
 
 // Inventory Management
-app.get('/admin/inventory', isAdmin, (req, res) => {
-  const stmt = db.prepare(`
-    SELECT inventory.*, items.name as item_name
-    FROM inventory
-    LEFT JOIN items ON inventory.itemid = items.id
-    ORDER BY inventory.id DESC
-  `);
-  const inventory = stmt.all();
-  
-  const itemsStmt = db.prepare('SELECT * FROM items ORDER BY name ASC');
-  const items = itemsStmt.all();
-  
-  res.render('inventory', {
-    username: req.session.username,
-    inventory: inventory,
-    items: items
-  });
+app.get('/admin/inventory', isAdmin, async (req, res) => {
+  try {
+    const inventory = await query(`
+      SELECT inventory.*, users.userid, items.name as item_name
+      FROM inventory
+      LEFT JOIN users ON inventory.userid = users.userid
+      LEFT JOIN items ON inventory.itemid = items.id
+      ORDER BY inventory.id DESC
+    `);
+    
+    const users = await query('SELECT userid FROM users ORDER BY userid ASC');
+    const items = await query('SELECT id, name FROM items ORDER BY name ASC');
+    
+    res.render('inventory', {
+      username: req.session.username,
+      inventory: inventory,
+      users: users,
+      items: items
+    });
+  } catch (error) {
+    console.error('Inventory page error:', error);
+    res.status(500).send('Error loading inventory page');
+  }
 });
 
-app.post('/admin/inventory/create', isAdmin, (req, res) => {
+app.post('/admin/inventory/update', isAdmin, async (req, res) => {
   const { userid, itemid, amount } = req.body;
   
   try {
-    const stmt = db.prepare('INSERT INTO inventory (userid, itemid, amount) VALUES (?, ?, ?)');
-    stmt.run(userid, itemid, amount || 0);
-    res.json({ success: true, message: 'Inventory item created successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create inventory item: ' + error.message });
-  }
-});
-
-app.post('/admin/inventory/:id/update', isAdmin, (req, res) => {
-  const { amount } = req.body;
-  
-  try {
-    if (parseInt(amount) <= 0) {
-      // Delete if amount is 0 or less
-      const stmt = db.prepare('DELETE FROM inventory WHERE id = ?');
-      stmt.run(req.params.id);
-      res.json({ success: true, message: 'Inventory item deleted (amount = 0)' });
+    const existing = await queryOne('SELECT * FROM inventory WHERE userid = ? AND itemid = ?', [userid, itemid]);
+    
+    if (existing) {
+      await query('UPDATE inventory SET amount = ? WHERE userid = ? AND itemid = ?', [amount, userid, itemid]);
     } else {
-      const stmt = db.prepare('UPDATE inventory SET amount = ? WHERE id = ?');
-      stmt.run(amount, req.params.id);
-      res.json({ success: true, message: 'Inventory updated successfully' });
+      await query('INSERT INTO inventory (userid, itemid, amount) VALUES (?, ?, ?)', [userid, itemid, amount]);
     }
+    
+    res.json({ success: true, message: 'Inventory updated successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update inventory: ' + error.message });
-  }
-});
-
-app.post('/admin/inventory/:id/delete', isAdmin, (req, res) => {
-  try {
-    const stmt = db.prepare('DELETE FROM inventory WHERE id = ?');
-    stmt.run(req.params.id);
-    res.json({ success: true, message: 'Inventory item deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete inventory item' });
+    res.status(500).json({ error: 'Failed to update inventory' });
   }
 });
 
 // Auctions Management
-app.get('/admin/auctions', isAdmin, (req, res) => {
-  const stmt = db.prepare(`
-    SELECT auctions.*,
-      oc1.id as card1_id, c1.name as card1_name, oc1.print as card1_print,
-      oc2.id as card2_id, c2.name as card2_name, oc2.print as card2_print,
-      oc3.id as card3_id, c3.name as card3_name, oc3.print as card3_print,
-      oc4.id as card4_id, c4.name as card4_name, oc4.print as card4_print
-    FROM auctions
-    LEFT JOIN owned_cards oc1 ON auctions.card1 = oc1.id
-    LEFT JOIN cards c1 ON oc1.card = c1.id
-    LEFT JOIN owned_cards oc2 ON auctions.card2 = oc2.id
-    LEFT JOIN cards c2 ON oc2.card = c2.id
-    LEFT JOIN owned_cards oc3 ON auctions.card3 = oc3.id
-    LEFT JOIN cards c3 ON oc3.card = c3.id
-    LEFT JOIN owned_cards oc4 ON auctions.card4 = oc4.id
-    LEFT JOIN cards c4 ON oc4.card = c4.id
-    ORDER BY auctions.id DESC
-  `);
-  const auctions = stmt.all();
-  
-  res.render('auctions', {
-    username: req.session.username,
-    auctions: auctions
-  });
-});
-
-app.get('/admin/auctions/search-cards', isAdmin, (req, res) => {
-  const { query } = req.query;
-  
+app.get('/admin/auctions', isAdmin, async (req, res) => {
   try {
-    const stmt = db.prepare(`
-      SELECT owned_cards.id, owned_cards.print, cards.name, cards.edition
-      FROM owned_cards
-      LEFT JOIN cards ON owned_cards.card = cards.id
-      WHERE cards.name LIKE ? OR owned_cards.id LIKE ?
-      ORDER BY cards.name ASC
-      LIMIT 20
-    `);
-    const cards = stmt.all(`%${query}%`, `%${query}%`);
-    res.json({ success: true, cards: cards });
+    const auctions = await query('SELECT * FROM auctions ORDER BY id DESC');
+    
+    res.render('auctions', {
+      username: req.session.username,
+      auctions: auctions
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to search cards' });
+    console.error('Auctions page error:', error);
+    res.status(500).send('Error loading auctions page');
   }
 });
 
-app.post('/admin/auctions/create', isAdmin, (req, res) => {
+app.get('/admin/auctions/search-cards', isAdmin, async (req, res) => {
+  const { query: searchQuery } = req.query;
+  
+  if (!searchQuery) {
+    return res.json({ success: true, cards: [] });
+  }
+  
+  try {
+    const cards = await query(`
+      SELECT cards.id, cards.name, cards.edition, sets.name as set_name
+      FROM cards
+      LEFT JOIN sets ON cards.set_id = sets.id
+      WHERE cards.name LIKE ? OR CAST(cards.id AS CHAR) LIKE ?
+      ORDER BY cards.name ASC
+      LIMIT 20
+    `, [`%${searchQuery}%`, `%${searchQuery}%`]);
+    
+    console.log('Auction search query:', searchQuery, 'Results:', cards.length, cards);
+    res.json({ success: true, cards: cards });
+  } catch (error) {
+    console.error('Auction search error:', error);
+    res.status(500).json({ success: false, error: 'Failed to search cards: ' + error.message });
+  }
+});
+
+app.post('/admin/auctions/create', isAdmin, async (req, res) => {
   const { starttime, endtime, card1, card2, card3, card4 } = req.body;
   
   try {
-    // Transfer all 4 cards to userid '1'
-    const transferStmt = db.prepare('UPDATE owned_cards SET owner = ? WHERE id = ?');
-    if (card1) transferStmt.run('1', card1);
-    if (card2) transferStmt.run('1', card2);
-    if (card3) transferStmt.run('1', card3);
-    if (card4) transferStmt.run('1', card4);
+    const cardIds = [card1, card2, card3, card4].filter(Boolean);
+    const ownedCardIds = [];
     
-    const stmt = db.prepare(`
+    for (const cardId of cardIds) {
+      const card = await queryOne('SELECT * FROM cards WHERE id = ?', [cardId]);
+      
+      if (!card) {
+        return res.status(400).json({ error: `Card ${cardId} not found` });
+      }
+      
+      const printResult = await queryOne('SELECT COUNT(*) as count FROM owned_cards WHERE card = ?', [cardId]);
+      const print = (printResult.count || 0) + 1;
+      
+      const ownedCardId = generateUniqueId({ prepare: (sql) => ({ get: async (params) => await queryOne(sql, params) }) });
+      
+      await query(`
+        INSERT INTO owned_cards (id, card, print, owner, condition)
+        VALUES (?, ?, ?, ?, ?)
+      `, [ownedCardId, cardId, print, '1', 5]);
+      
+      ownedCardIds.push(ownedCardId);
+    }
+    
+    await query(`
       INSERT INTO auctions (starttime, endtime, card1, card2, card3, card4)
       VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    
-    stmt.run(
+    `, [
       starttime,
       endtime,
-      card1 || null,
-      card2 || null,
-      card3 || null,
-      card4 || null
-    );
+      ownedCardIds[0] || null,
+      ownedCardIds[1] || null,
+      ownedCardIds[2] || null,
+      ownedCardIds[3] || null
+    ]);
     
-    res.json({ success: true, message: 'Auction created successfully' });
+    res.json({ success: true, message: 'Auction created successfully with 4 new cards' });
   } catch (error) {
+    console.error('Auction creation error:', error);
     res.status(500).json({ error: 'Failed to create auction: ' + error.message });
   }
 });
 
-app.post('/admin/auctions/:id/delete', isAdmin, (req, res) => {
+app.post('/admin/auctions/:id/delete', isAdmin, async (req, res) => {
   try {
-    // Get auction details first
-    const auctionStmt = db.prepare('SELECT * FROM auctions WHERE id = ?');
-    const auction = auctionStmt.get(req.params.id);
+    const auction = await queryOne('SELECT * FROM auctions WHERE id = ?', [req.params.id]);
     
     if (!auction) {
       return res.status(404).json({ error: 'Auction not found' });
     }
     
-    // Check if auction has ended
     const now = new Date().toISOString();
     if (auction.endtime < now) {
-      // Delete unsold cards (where currentbid is 0)
-      const deleteStmt = db.prepare('DELETE FROM owned_cards WHERE id = ?');
-      
-      if (auction.card1 && auction.currentbid1 === 0) deleteStmt.run(auction.card1);
-      if (auction.card2 && auction.currentbid2 === 0) deleteStmt.run(auction.card2);
-      if (auction.card3 && auction.currentbid3 === 0) deleteStmt.run(auction.card3);
-      if (auction.card4 && auction.currentbid4 === 0) deleteStmt.run(auction.card4);
+      if (auction.card1 && auction.currentbid1 === 0) {
+        await query('DELETE FROM owned_cards WHERE id = ?', [auction.card1]);
+      }
+      if (auction.card2 && auction.currentbid2 === 0) {
+        await query('DELETE FROM owned_cards WHERE id = ?', [auction.card2]);
+      }
+      if (auction.card3 && auction.currentbid3 === 0) {
+        await query('DELETE FROM owned_cards WHERE id = ?', [auction.card3]);
+      }
+      if (auction.card4 && auction.currentbid4 === 0) {
+        await query('DELETE FROM owned_cards WHERE id = ?', [auction.card4]);
+      }
     }
     
-    // Delete the auction
-    const stmt = db.prepare('DELETE FROM auctions WHERE id = ?');
-    stmt.run(req.params.id);
+    await query('DELETE FROM auctions WHERE id = ?', [req.params.id]);
     
     res.json({ success: true, message: 'Auction deleted successfully' });
   } catch (error) {
+    console.error('Auction deletion error:', error);
     res.status(500).json({ error: 'Failed to delete auction' });
   }
 });

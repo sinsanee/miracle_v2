@@ -656,11 +656,15 @@
         }
 
         // Card search for owned card generation
-        var allCards = JSON.stringify(cards || []);
+        var allCards = <%- JSON.stringify(cards || []) %>;
+        
+        console.log('All cards loaded:', allCards.length, allCards);
         
         function searchCardsForGen(query) {
             var resultsContainer = document.getElementById('gen-card-results');
             var selectedCard = document.getElementById('gen-selected-card');
+            
+            console.log('Searching for:', query, 'Total cards:', allCards.length);
             
             if (!allCards || allCards.length === 0) {
                 resultsContainer.innerHTML = '<div style="padding: 10px; color: rgba(255,255,255,0.5);">No cards available</div>';
@@ -677,6 +681,8 @@
                 var searchText = (card.name + ' ' + card.edition + ' ' + (card.set_name || '')).toLowerCase();
                 return searchText.includes(query.toLowerCase());
             });
+            
+            console.log('Filtered results:', filtered.length, filtered);
             
             if (filtered.length === 0) {
                 resultsContainer.innerHTML = '<div style="padding: 10px; color: rgba(255,255,255,0.5);">No cards found</div>';

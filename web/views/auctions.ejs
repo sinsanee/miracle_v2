@@ -280,6 +280,22 @@
             position: relative;
         }
 
+        .search-input-container input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            background: rgba(10, 14, 39, 0.8);
+            border: 2px solid rgba(131, 56, 236, 0.3);
+            border-radius: 8px;
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1rem;
+        }
+
+        .search-input-container input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
         .search-results {
             position: absolute;
             top: 100%;
@@ -292,6 +308,8 @@
             overflow-y: auto;
             z-index: 10;
             display: none;
+            margin-top: 5px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         }
 
         .search-results.show {
@@ -557,17 +575,26 @@
             clearTimeout(searchTimeout);
             
             var query = document.getElementById('search-card' + cardNum).value;
+            console.log('Auction search - cardNum:', cardNum, 'query:', query);
+            
             if (query.length < 2) {
                 document.getElementById('search-results-' + cardNum).classList.remove('show');
                 return;
             }
 
             searchTimeout = setTimeout(function() {
+                console.log('Fetching auction search results for:', query);
                 fetch('/admin/auctions/search-cards?query=' + encodeURIComponent(query))
-                .then(function(response) { return response.json(); })
+                .then(function(response) { 
+                    console.log('Response status:', response.status);
+                    return response.json(); 
+                })
                 .then(function(data) {
+                    console.log('Auction search results:', data);
                     if (data.success) {
                         displaySearchResults(cardNum, data.cards);
+                    } else {
+                        console.error('Search failed:', data.error);
                     }
                 })
                 .catch(function(error) {
@@ -579,6 +606,8 @@
         function displaySearchResults(cardNum, cards) {
             var resultsDiv = document.getElementById('search-results-' + cardNum);
             
+            console.log('Displaying results for card', cardNum, ':', cards.length, 'cards');
+            
             if (cards.length === 0) {
                 resultsDiv.innerHTML = '<div class="search-result-item">No cards found</div>';
                 resultsDiv.classList.add('show');
@@ -589,7 +618,8 @@
             cards.forEach(function(card) {
                 var item = document.createElement('div');
                 item.className = 'search-result-item';
-                item.textContent = card.name + ' E' + card.edition + ' - Print #' + card.print + ' (ID: ' + card.id + ')';
+                var setInfo = card.set_name ? ' - ' + card.set_name : '';
+                item.textContent = card.name + ' (Edition ' + card.edition + ')' + setInfo + ' - ID: ' + card.id;
                 item.onclick = function() {
                     selectCard(cardNum, card);
                 };
@@ -600,10 +630,11 @@
 
         function selectCard(cardNum, card) {
             document.getElementById('card' + cardNum + '-id').value = card.id;
-            document.getElementById('search-card' + cardNum).value = card.name + ' E' + card.edition + ' #' + card.print;
+            var setInfo = card.set_name ? ' - ' + card.set_name : '';
+            document.getElementById('search-card' + cardNum).value = card.name + ' E' + card.edition + setInfo;
             
             var selectedDiv = document.getElementById('selected-card-' + cardNum);
-            selectedDiv.textContent = '✓ Selected: ' + card.name + ' Edition ' + card.edition + ' - Print #' + card.print;
+            selectedDiv.textContent = '✓ Selected: ' + card.name + ' Edition ' + card.edition + setInfo;
             selectedDiv.classList.add('show');
             
             document.getElementById('search-results-' + cardNum).classList.remove('show');

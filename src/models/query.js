@@ -1,70 +1,65 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const mysql = require('mysql2/promise');
+require('dotenv').config();
 
-const dbPath = path.join(__dirname, '..', 'database', 'cards.sqlite3');
-
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-        console.error('Failed to connect to SQLite database:', err);
-    } else {
-        console.log('Connected to SQLite database');
-    }
+// Create connection pool
+const pool = mysql.createPool({
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'cards_db',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
+
+// Test connection
+pool.getConnection()
+    .then(connection => {
+        console.log('Connected to MySQL database');
+        connection.release();
+    })
+    .catch(err => {
+        console.error('Failed to connect to MySQL database:', err);
+    });
 
 /**
  * Run a SELECT query that returns multiple rows
  */
-function all(query, params = []) {
-    return new Promise((resolve, reject) => {
-        db.all(query, params, (err, rows) => {
-            if (err) return reject(err);
-            resolve(rows);
-        });
-    });
+async function all(query, params = []) {
+    const [rows] = await pool.execute(query, params);
+    return rows;
 }
 
 /**
  * Run a SELECT query that returns a single row
  */
-function get(query, params = []) {
-    return new Promise((resolve, reject) => {
-        db.get(query, params, (err, row) => {
-            if (err) return reject(err);
-            resolve(row);
-        });
-    });
+async function get(query, params = []) {
+    const [rows] = await pool.execute(query, params);
+    return rows[0] || null;
 }
 
 /**
  * Run INSERT / UPDATE / DELETE
  */
-function run(query, params = []) {
-    return new Promise((resolve, reject) => {
-        db.run(query, params, function (err) {
-            if (err) return reject(err);
-            resolve({
-                lastID: this.lastID,
-                changes: this.changes
-            });
-        });
-    });
+async function run(query, params = []) {
+    const [result] = await pool.execute(query, params);
+    return {
+        lastID: result.insertId,
+        changes: result.affectedRows
+    };
 }
 
 /**
  * Gracefully close database (call on app shutdown)
  */
-function close() {
-    return new Promise((resolve, reject) => {
-        db.close(err => {
-            if (err) return reject(err);
-            resolve();
-        });
-    });
+async function close() {
+    await pool.end();
 }
 
 module.exports = {
     all,
     get,
     run,
-    close
+    close,
+    pool // Export pool for advanced usage if needed
 };

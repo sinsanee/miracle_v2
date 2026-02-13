@@ -13,6 +13,7 @@
     "@napi-rs/canvas": "^0.1.84",
     "discord.js": "^14.25.1",
     "dotenv": "^17.2.3",
+    "mysql2": "^3.17.0",
     "sharp": "^0.34.5",
     "sqlite3": "^5.1.7"
   }

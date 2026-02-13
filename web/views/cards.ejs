@@ -710,7 +710,7 @@
                          data-dropping="<%= card.dropping %>"
                          data-scheduled="<%= card.scheduled_drop ? '1' : '0' %>">
                         <% if (card.bordered_image) { %>
-                            <img src="/cards/<%= card.bordered_image %>" alt="<%= card.name %>" class="card-image">
+                            <img src="/cards/images/<%= card.bordered_image %>" alt="<%= card.name %>" class="card-image">
                         <% } %>
                         <div class="card-name"><%= card.name %></div>
                         <div class="card-info"><strong>ID:</strong> <%= card.id %></div>
