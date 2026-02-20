@@ -1,3 +1,6 @@
+// web/models/generateId.js
+// ID Generation Pattern: 1, 2, 3, 4, 5, 6, 7, 8, 9, A, B, C...Z, 11, 12, 13...19, 1A, 1B...1Z, 21, 22...
+
 class IDGenerator {
     constructor(lastID) {
         this.numeric = '123456789';
@@ -67,6 +70,26 @@ class IDGenerator {
     }
 }
 
+// Helper function for MySQL queries
+async function generateUniqueId() {
+    const { get } = require('./query');
+    
+    try {
+        const lastCard = await get('SELECT id FROM owned_cards ORDER BY id DESC LIMIT 1');
+        
+        if (!lastCard || !lastCard.id) {
+            return '1';  // Start with 1
+        }
+        
+        const generator = await IDGenerator.create(lastCard.id);
+        return generator.generateNext();
+    } catch (error) {
+        console.error('Error generating unique ID:', error);
+        throw error;
+    }
+}
+
 module.exports = {
-    IDGenerator
+    IDGenerator,
+    generateUniqueId
 };

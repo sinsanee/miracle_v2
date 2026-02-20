@@ -661,6 +661,15 @@
         <div class="page-header">
             <h2>Manage Cards</h2>
             <div style="display: flex; gap: 10px;">
+                <button class="btn" onclick="location.reload()" title="Refresh page">
+                    🔄 Refresh
+                </button>
+                <button class="btn btn-danger" onclick="bulkDeleteCards()" title="Delete selected cards">
+                    🗑️ Delete Selected
+                </button>
+                <button class="btn" style="background: #dc3545; border-color: #dc3545;" onclick="resetEconomy()" title="WARNING: Deletes ALL cards and owned cards">
+                    ⚠️ Reset Economy
+                </button>
                 <button class="btn btn-primary" onclick="openBulkModal()">+ Bulk Add Cards</button>
                 <button class="btn btn-primary" onclick="openCreateModal()">+ Add New Card</button>
             </div>
@@ -709,6 +718,7 @@
                          data-name="<%= card.name.toLowerCase() %>"
                          data-dropping="<%= card.dropping %>"
                          data-scheduled="<%= card.scheduled_drop ? '1' : '0' %>">
+                        <input type="checkbox" class="card-checkbox" value="<%= card.id %>" style="position: absolute; top: 10px; left: 10px; width: 20px; height: 20px; cursor: pointer; z-index: 10;">
                         <% if (card.bordered_image) { %>
                             <img src="/cards/images/<%= card.bordered_image %>" alt="<%= card.name %>" class="card-image">
                         <% } %>
@@ -1182,10 +1192,12 @@
             var cards = [];
             var previewPromises = [];
             
-            // Get set name for preview
+            // Get set info for preview
             var setName = '';
+            var setId = null;
             if (document.getElementById('bulk-set-existing').checked) {
                 var setSelect = document.getElementById('bulk-set-select');
+                setId = setSelect.value;
                 setName = setSelect.options[setSelect.selectedIndex]?.text || 'Set Name';
             } else {
                 setName = document.getElementById('bulk-set-name-input').value || 'New Set';
@@ -1223,7 +1235,9 @@
                     formData.append('subtitle', 'Edition ' + cardData.edition);
                     formData.append('footer', setName);
                     formData.append('cropMode', cardData.cropMode);
-                    formData.append('setId', setId);  // Add setId for border loading
+                    if (setId) {
+                        formData.append('setId', setId);
+                    }
                     
                     cards.push(cardData);
                     previewPromises.push(
@@ -1466,7 +1480,7 @@
                     document.getElementById('card-name').value = card.name;
                     document.getElementById('edition-select').value = card.edition;
                     document.getElementById('set-select').value = card.set_id;
-                    document.getElementById('image-url').value = card.image_url || '';
+                    document.getElementById('image-url').value = card.image || '';
                     
                     if (card.dropping === 1) {
                         document.getElementById('dropping-yes').checked = true;
@@ -1825,6 +1839,75 @@
                 }
             });
         });
+
+        // Bulk delete cards
+        function bulkDeleteCards() {
+            const checkboxes = document.querySelectorAll('.card-checkbox:checked');
+            const ids = Array.from(checkboxes).map(cb => parseInt(cb.value));
+            
+            if (ids.length === 0) {
+                alert('Please select cards to delete');
+                return;
+            }
+            
+            if (!confirm(`Delete ${ids.length} card(s)? This will also delete all owned copies. This cannot be undone!`)) {
+                return;
+            }
+            
+            fetch('/admin/cards/bulk-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(data.message);
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showMessage(data.error || 'Failed to delete cards', true);
+                }
+            })
+            .catch(err => {
+                console.error('Bulk delete error:', err);
+                showMessage('Failed to delete cards', true);
+            });
+        }
+
+        // Reset economy
+        function resetEconomy() {
+            const confirmation = prompt('⚠️ WARNING: This will DELETE ALL CARDS and ALL OWNED CARDS!\\n\\nType "RESET ECONOMY" to confirm (case sensitive):');
+            
+            if (confirmation !== 'RESET ECONOMY') {
+                alert('Reset cancelled - incorrect confirmation text');
+                return;
+            }
+            
+            const doubleCheck = confirm('Are you ABSOLUTELY SURE? This action CANNOT be undone!\\n\\nAll card data and ownership will be permanently lost.');
+            
+            if (!doubleCheck) {
+                alert('Reset cancelled');
+                return;
+            }
+            
+            fetch('/admin/reset-economy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ ' + data.message);
+                    location.reload();
+                } else {
+                    alert('❌ Error: ' + data.error);
+                }
+            })
+            .catch(err => {
+                console.error('Reset economy error:', err);
+                alert('❌ Failed to reset economy');
+            });
+        }
     </script>
 </body>
 </html>

@@ -1,7 +1,6 @@
 const { Client, Interaction, ApplicationCommandOptionType, EmbedBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, AttachmentBuilder, ComponentType, TimestampStyles,} = require('discord.js');
 const { all, get } = require('../../models/query');
-const fs = require("fs");
-const path = require("path");
+const { resolveImageBuffer } = require('../../models/imageResolver');
 
 module.exports = {
     /**
@@ -13,26 +12,20 @@ module.exports = {
 
         // Variables
         const name = interaction.options.get('name').value;
-        const set = interaction.options.get('set')?.value;
-        const sort = interaction.options.get('sort')?.value || 'name ASC';
         const edition = interaction.options.get('edition')?.value;
+        const sort = interaction.options.get('sort')?.value || 'name ASC';
 
         try {
-            // Build the SQL query
-            let query = 'SELECT * FROM cards WHERE name LIKE ?';
+            // Build the SQL query - group by name and edition
+            let query = 'SELECT name, edition, COUNT(*) as set_count FROM cards WHERE name LIKE ? AND dropping = 1';
             const params = [`%${name}%`];
-
-            if (set) {
-                query += ' AND `set` = ?';
-                params.push(set);
-            }
 
             if (edition) {
                 query += ' AND edition = ?';
                 params.push(edition);
             }
 
-            query += ` AND dropping = 1 ORDER BY ${sort}`;
+            query += ` GROUP BY name, edition ORDER BY ${sort}`;
 
             // Execute the search
             const results = await all(query, params);
@@ -44,116 +37,10 @@ module.exports = {
                 });
             }
 
-            // If only one result, show info page directly
+            // If only one result, show set selection directly
             if (results.length === 1) {
-                const card = results[0];
-                let currentView = 'info'; // 'info' or 'image'
-                const infoData = await createCardInfoEmbed(card);
-                
-                // Create view image button
-                const viewImageButton = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`view_image_single_${interaction.id}`)
-                        .setLabel('🖼️ View Full Image')
-                        .setStyle(ButtonStyle.Primary)
-                );
-
-                // Create back button for image view
-                const backToInfoButton = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`back_to_info_single_${interaction.id}`)
-                        .setLabel('⬅️ Back to Info')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-
-                const message = await interaction.editReply({
-                    embeds: [infoData.embed],
-                    files: infoData.files,
-                    components: [viewImageButton]
-                });
-
-                // Setup collector for view image button
-                const collector = message.createMessageComponentCollector({
-                    idle: 30000 // 30 seconds of inactivity
-                });
-
-                collector.on('collect', async (i) => {
-                    if (i.user.id !== interaction.user.id) {
-                        return i.reply({
-                            content: `Only **${interaction.user.username}** can use this button`,
-                            ephemeral: true
-                        }).catch(console.error);
-                    }
-
-                    try {
-                        if (i.customId === `view_image_single_${interaction.id}`) {
-                            currentView = 'image';
-                            const imagePath = card.bordered_image.replace('.\\src\\', './src/');
-                            if (fs.existsSync(imagePath)) {
-                                const imageBuffer = fs.readFileSync(imagePath);
-                                const fullImageAttachment = new AttachmentBuilder(imageBuffer, { name: 'full_card.png' });
-                                
-                                const imageEmbed = new EmbedBuilder()
-                                    .setTitle(card.name)
-                                    .setImage('attachment://full_card.png')
-                                    .setColor('#5865F2');
-
-                                await i.update({
-                                    embeds: [imageEmbed],
-                                    files: [fullImageAttachment],
-                                    components: [backToInfoButton]
-                                }).catch(console.error);
-
-                                collector.resetTimer();
-                            }
-                        } else if (i.customId === `back_to_info_single_${interaction.id}`) {
-                            currentView = 'info';
-                            const infoData = await createCardInfoEmbed(card);
-                            
-                            await i.update({
-                                embeds: [infoData.embed],
-                                files: infoData.files,
-                                components: [viewImageButton]
-                            }).catch(console.error);
-
-                            collector.resetTimer();
-                        }
-                    } catch (error) {
-                        console.error('Error handling single result interaction:', error);
-                    }
-                });
-
-                collector.on('end', async () => {
-                    if (currentView === 'info') {
-                        await message.edit({
-                            embeds: [infoData.embed],
-                            files: infoData.files,
-                            components: []
-                        }).catch(console.error);
-                    } else if (currentView === 'image') {
-                        try {
-                            const imagePath = card.bordered_image.replace('.\\src\\', './src/');
-                            if (fs.existsSync(imagePath)) {
-                                const imageBuffer = fs.readFileSync(imagePath);
-                                const fullImageAttachment = new AttachmentBuilder(imageBuffer, { name: 'full_card.png' });
-                                
-                                const imageEmbed = new EmbedBuilder()
-                                    .setTitle(card.name)
-                                    .setImage('attachment://full_card.png')
-                                    .setColor('#5865F2');
-
-                                await message.edit({
-                                    embeds: [imageEmbed],
-                                    files: [fullImageAttachment],
-                                    components: []
-                                }).catch(console.error);
-                            }
-                        } catch (error) {
-                            console.error('Error in single result collector end:', error);
-                        }
-                    }
-                });
-
+                const character = results[0];
+                await showSetSelection(interaction, character.name, character.edition);
                 return;
             }
 
@@ -167,217 +54,100 @@ module.exports = {
             }
 
             // Create embeds for pagination
-            const embeds = await Promise.all(pages.map(async (pageCards, pageIndex) => {
+            const embeds = pages.map((pageCards, pageIndex) => {
                 const embed = new EmbedBuilder()
                     .setTitle(`🔍 Search Results for "${name}"`)
-                    .setDescription(`Found ${results.length} card${results.length !== 1 ? 's' : ''}`)
+                    .setDescription(`Found ${results.length} character${results.length !== 1 ? 's' : ''}`)
                     .setColor('#5865F2')
                     .setFooter({ text: `Page ${pageIndex + 1}/${pages.length}` });
 
-                for (const [index, card] of pageCards.entries()) {
+                for (const [index, character] of pageCards.entries()) {
                     const globalIndex = (pageIndex * cardsPerPage) + index + 1;
-                    // Get set name
-                    const setResult = await get('SELECT name FROM sets WHERE id = ?', [card.set]);
-                    const setName = setResult ? setResult.name : 'Unknown';
+                    const setCountText = character.set_count > 1 ? `${character.set_count} sets` : '1 set';
                     
                     embed.addFields({
-                        name: `${globalIndex}. ${card.name}`,
-                        value: `Set: ${setName}`,
+                        name: `${globalIndex}. ${character.name}`,
+                        value: `Edition: ${character.edition} • Available in ${setCountText}`,
                         inline: false
                     });
                 }
 
                 return embed;
-            }));
+            });
 
+            // Create dropdown for character selection
             let currentPage = 0;
-            let currentView = 'list'; // 'list', 'info', or 'image'
-            let currentCard = null;
 
-            // Create dropdown for current page
-            async function createDropdown(pageIndex) {
+            const createDropdown = (pageIndex) => {
                 const pageCards = pages[pageIndex];
-                const options = await Promise.all(pageCards.map(async (card, index) => {
+                const options = pageCards.map((character, index) => {
                     const globalIndex = (pageIndex * cardsPerPage) + index + 1;
-                    // Get set name
-                    const setResult = await get('SELECT name FROM sets WHERE id = ?', [card.set]);
-                    const setName = setResult ? setResult.name : 'Unknown';
-                    
+                    const setCountText = character.set_count > 1 ? `${character.set_count} sets` : '1 set';
                     return {
-                        label: `${globalIndex}. ${card.name}`.substring(0, 100),
-                        description: `Set: ${setName}`.substring(0, 100),
-                        value: `card_${card.id}`
+                        label: `${globalIndex}. ${character.name}`,
+                        description: `Edition ${character.edition} • ${setCountText}`,
+                        value: `${character.name}|${character.edition}`
                     };
-                }));
+                });
 
                 return new ActionRowBuilder().addComponents(
                     new StringSelectMenuBuilder()
-                        .setCustomId(`card_select_${interaction.id}`)
-                        .setPlaceholder('Select a card to view details')
+                        .setCustomId(`select_character_${interaction.id}`)
+                        .setPlaceholder('Select a character to view sets')
                         .addOptions(options)
                 );
-            }
+            };
 
             // Create pagination buttons
-            function createPaginationButtons(index) {
-                const first = new ButtonBuilder()
-                    .setCustomId(`pagefirst_${interaction.id}`)
-                    .setEmoji('⏪')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(index === 0);
-
-                const prev = new ButtonBuilder()
-                    .setCustomId(`pageprev_${interaction.id}`)
-                    .setEmoji('◀️')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(index === 0);
-
-                const pageCount = new ButtonBuilder()
-                    .setCustomId(`pagecount_${interaction.id}`)
-                    .setLabel(`${index + 1}/${embeds.length}`)
-                    .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(true);
-
-                const next = new ButtonBuilder()
-                    .setCustomId(`pagenext_${interaction.id}`)
-                    .setEmoji('▶️')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(index === embeds.length - 1);
-
-                const last = new ButtonBuilder()
-                    .setCustomId(`pagelast_${interaction.id}`)
-                    .setEmoji('⏩')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(index === embeds.length - 1);
-
-                return new ActionRowBuilder().addComponents([first, prev, pageCount, next, last]);
-            }
-
-            // Create info view buttons
-            function createInfoButtons(cardId) {
-                const backButton = new ButtonBuilder()
-                    .setCustomId(`back_to_list_${interaction.id}`)
-                    .setLabel('⬅️ Back to List')
-                    .setStyle(ButtonStyle.Secondary);
-
-                const viewImageButton = new ButtonBuilder()
-                    .setCustomId(`view_image_${interaction.id}_${cardId}`)
-                    .setLabel('🖼️ View Full Image')
-                    .setStyle(ButtonStyle.Primary);
-
-                return new ActionRowBuilder().addComponents([backButton, viewImageButton]);
-            }
-
-            // Create image view buttons
-            function createImageButtons() {
-                const backButton = new ButtonBuilder()
-                    .setCustomId(`back_to_info_${interaction.id}`)
-                    .setLabel('⬅️ Back to Info')
-                    .setStyle(ButtonStyle.Secondary);
-
-                return new ActionRowBuilder().addComponents([backButton]);
-            }
+            const createPaginationButtons = (currentPage) => {
+                return new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`pagefirst_${interaction.id}`)
+                        .setLabel('⏮️')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage === 0),
+                    new ButtonBuilder()
+                        .setCustomId(`pageprev_${interaction.id}`)
+                        .setLabel('◀️')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage === 0),
+                    new ButtonBuilder()
+                        .setCustomId(`pagenext_${interaction.id}`)
+                        .setLabel('▶️')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage === embeds.length - 1),
+                    new ButtonBuilder()
+                        .setCustomId(`pagelast_${interaction.id}`)
+                        .setLabel('⏭️')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage === embeds.length - 1)
+                );
+            };
 
             const message = await interaction.editReply({
                 embeds: [embeds[currentPage]],
-                components: [await createDropdown(currentPage), createPaginationButtons(currentPage)]
+                components: [createDropdown(currentPage), createPaginationButtons(currentPage)]
             });
 
+            // Setup collector
             const collector = message.createMessageComponentCollector({
-                idle: 30000 // 30 seconds of inactivity
+                idle: 60000 // 60 seconds
             });
 
             collector.on('collect', async (i) => {
                 if (i.user.id !== interaction.user.id) {
                     return i.reply({
-                        content: `Only **${interaction.user.username}** can use these buttons`,
+                        content: `Only **${interaction.user.username}** can use this button`,
                         ephemeral: true
                     }).catch(console.error);
                 }
 
                 try {
-                    // Handle card selection
-                    if (i.isStringSelectMenu() && i.customId === `card_select_${interaction.id}`) {
-                        const cardId = parseInt(i.values[0].replace('card_', ''));
-                        const card = results.find(c => c.id === cardId);
-
-                        if (card) {
-                            currentCard = card;
-                            currentView = 'info';
-                            const infoData = await createCardInfoEmbed(card);
-                            
-                            await i.update({
-                                embeds: [infoData.embed],
-                                files: infoData.files,
-                                components: [createInfoButtons(card.id)]
-                            }).catch(console.error);
-
-                            collector.resetTimer();
-                        }
-                    }
-                    // Handle back to list button
-                    else if (i.isButton() && i.customId === `back_to_list_${interaction.id}`) {
-                        currentView = 'list';
-                        currentCard = null;
-
-                        await i.update({
-                            embeds: [embeds[currentPage]],
-                            files: [],
-                            components: [await createDropdown(currentPage), createPaginationButtons(currentPage)]
-                        }).catch(console.error);
-
-                        collector.resetTimer();
-                    }
-                    // Handle back to info button
-                    else if (i.isButton() && i.customId === `back_to_info_${interaction.id}`) {
-                        if (currentCard) {
-                            currentView = 'info';
-                            const infoData = await createCardInfoEmbed(currentCard);
-                            
-                            await i.update({
-                                embeds: [infoData.embed],
-                                files: infoData.files,
-                                components: [createInfoButtons(currentCard.id)]
-                            }).catch(console.error);
-
-                            collector.resetTimer();
-                        }
-                    }
-                    // Handle view full image button
-                    else if (i.isButton() && i.customId.startsWith(`view_image_${interaction.id}_`)) {
-                        const cardId = parseInt(i.customId.split('_').pop());
-                        const card = results.find(c => c.id === cardId);
-
-                        if (card) {
-                            currentView = 'image';
-                            try {
-                                const imagePath = card.bordered_image.replace('.\\src\\', './src/');
-                                if (fs.existsSync(imagePath)) {
-                                    const imageBuffer = fs.readFileSync(imagePath);
-                                    const fullImageAttachment = new AttachmentBuilder(imageBuffer, { name: 'full_card.png' });
-                                    
-                                    const imageEmbed = new EmbedBuilder()
-                                        .setTitle(card.name)
-                                        .setImage('attachment://full_card.png')
-                                        .setColor('#5865F2');
-
-                                    await i.update({
-                                        embeds: [imageEmbed],
-                                        files: [fullImageAttachment],
-                                        components: [createImageButtons()]
-                                    }).catch(console.error);
-
-                                    collector.resetTimer();
-                                }
-                            } catch (error) {
-                                console.error('Error showing full image:', error);
-                            }
-                        }
-                    }
-                    // Handle pagination
-                    else if (i.isButton()) {
-                        await i.deferUpdate();
-
+                    if (i.customId === `select_character_${interaction.id}`) {
+                        const [characterName, characterEdition] = i.values[0].split('|');
+                        collector.stop();
+                        await showSetSelection(i, characterName, parseInt(characterEdition));
+                    } else if (i.customId.startsWith('page')) {
                         if (i.customId === `pagefirst_${interaction.id}`) {
                             currentPage = 0;
                         } else if (i.customId === `pageprev_${interaction.id}`) {
@@ -388,9 +158,9 @@ module.exports = {
                             currentPage = embeds.length - 1;
                         }
 
-                        await message.edit({
+                        await i.update({
                             embeds: [embeds[currentPage]],
-                            components: [await createDropdown(currentPage), createPaginationButtons(currentPage)]
+                            components: [createDropdown(currentPage), createPaginationButtons(currentPage)]
                         }).catch(console.error);
 
                         collector.resetTimer();
@@ -401,40 +171,10 @@ module.exports = {
             });
 
             collector.on('end', async () => {
-                if (currentView === 'list') {
-                    await message.edit({
-                        embeds: [embeds[currentPage]],
-                        components: []
-                    }).catch(console.error);
-                } else if (currentView === 'info' && currentCard) {
-                    const infoData = await createCardInfoEmbed(currentCard);
-                    await message.edit({
-                        embeds: [infoData.embed],
-                        files: infoData.files,
-                        components: []
-                    }).catch(console.error);
-                } else if (currentView === 'image' && currentCard) {
-                    try {
-                        const imagePath = currentCard.bordered_image.replace('.\\src\\', './src/');
-                        if (fs.existsSync(imagePath)) {
-                            const imageBuffer = fs.readFileSync(imagePath);
-                            const fullImageAttachment = new AttachmentBuilder(imageBuffer, { name: 'full_card.png' });
-                            
-                            const imageEmbed = new EmbedBuilder()
-                                .setTitle(currentCard.name)
-                                .setImage('attachment://full_card.png')
-                                .setColor('#5865F2');
-
-                            await message.edit({
-                                embeds: [imageEmbed],
-                                files: [fullImageAttachment],
-                                components: []
-                            }).catch(console.error);
-                        }
-                    } catch (error) {
-                        console.error('Error in collector end:', error);
-                    }
-                }
+                await message.edit({
+                    embeds: [embeds[currentPage]],
+                    components: []
+                }).catch(console.error);
             });
 
         } catch (error) {
@@ -443,6 +183,229 @@ module.exports = {
                 content: 'An error occurred while searching for cards.',
                 ephemeral: true
             }).catch(console.error);
+        }
+
+        /**
+         * Show set selection for a specific character + edition
+         */
+        async function showSetSelection(interactionOrComponent, characterName, characterEdition) {
+            // Get all cards with this name and edition
+            const cards = await all(
+                'SELECT cards.*, sets.name as set_name FROM cards LEFT JOIN sets ON cards.set_id = sets.id WHERE cards.name = ? AND cards.edition = ? AND cards.dropping = 1 ORDER BY sets.name ASC',
+                [characterName, characterEdition]
+            );
+
+            if (!cards || cards.length === 0) {
+                const updateMethod = interactionOrComponent.update || interactionOrComponent.editReply;
+                return updateMethod.call(interactionOrComponent, {
+                    content: 'No sets found for this character.',
+                    embeds: [],
+                    components: []
+                });
+            }
+
+            // If only one set, show card directly
+            if (cards.length === 1) {
+                await showCardInfo(interactionOrComponent, cards[0], null);
+                return;
+            }
+
+            // Multiple sets - show set selection
+            const setEmbed = new EmbedBuilder()
+                .setTitle(`${characterName} - Edition ${characterEdition}`)
+                .setDescription(`This character is available in ${cards.length} different sets. Select a set to view:`)
+                .setColor('#5865F2');
+
+            for (const card of cards) {
+                // Get circulation for this specific card
+                const circulationResult = await get(
+                    'SELECT COUNT(*) as count FROM owned_cards WHERE card = ?',
+                    [card.id]
+                );
+                const circulation = circulationResult ? circulationResult.count : 0;
+
+                setEmbed.addFields({
+                    name: `🎨 ${card.set_name}`,
+                    value: `Circulation: ${circulation} • Dropped: ${card.dropped} • Grabbed: ${card.grabbed}`,
+                    inline: false
+                });
+            }
+
+            // Create set selection dropdown
+            const setOptions = cards.map(card => ({
+                label: card.set_name,
+                description: `Card ID: ${card.id}`,
+                value: card.id.toString()
+            }));
+
+            const setSelectMenu = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId(`select_set_${interaction.id}`)
+                    .setPlaceholder('Select a set')
+                    .addOptions(setOptions)
+            );
+
+            const updateMethod = interactionOrComponent.update || interactionOrComponent.editReply;
+            const message = await updateMethod.call(interactionOrComponent, {
+                embeds: [setEmbed],
+                components: [setSelectMenu],
+                files: []
+            });
+
+            // Setup collector for set selection
+            const setCollector = message.createMessageComponentCollector({
+                componentType: ComponentType.StringSelect,
+                time: 60000
+            });
+
+            setCollector.on('collect', async (i) => {
+                if (i.user.id !== interaction.user.id) {
+                    return i.reply({
+                        content: `Only **${interaction.user.username}** can use this button`,
+                        ephemeral: true
+                    }).catch(console.error);
+                }
+
+                const selectedCardId = parseInt(i.values[0]);
+                const selectedCard = cards.find(c => c.id === selectedCardId);
+                
+                if (selectedCard) {
+                    setCollector.stop();
+                    await showCardInfo(i, selectedCard, cards);
+                }
+            });
+
+            setCollector.on('end', async (collected) => {
+                if (collected.size === 0) {
+                    await message.edit({
+                        components: []
+                    }).catch(console.error);
+                }
+            });
+        }
+
+        /**
+         * Show card info with image viewing and back button
+         */
+        async function showCardInfo(interactionOrComponent, card, allSetsCards) {
+            let currentView = 'info'; // 'info' or 'image'
+            const infoData = await createCardInfoEmbed(card);
+
+            // Create buttons
+            const buttons = new ActionRowBuilder();
+            
+            // Back to sets button (only if there are multiple sets)
+            if (allSetsCards && allSetsCards.length > 1) {
+                buttons.addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`back_to_sets_${interaction.id}`)
+                        .setLabel('⬅️ Back to Sets')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            }
+            
+            // View image button
+            buttons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`view_image_${interaction.id}`)
+                    .setLabel('🖼️ View Full Image')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+            const backToInfoButton = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`back_to_info_${interaction.id}`)
+                    .setLabel('⬅️ Back to Info')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+            const updateMethod = interactionOrComponent.update || interactionOrComponent.editReply;
+            const message = await updateMethod.call(interactionOrComponent, {
+                embeds: [infoData.embed],
+                files: infoData.files,
+                components: [buttons]
+            });
+
+            // Setup collector
+            const infoCollector = message.createMessageComponentCollector({
+                idle: 60000
+            });
+
+            infoCollector.on('collect', async (i) => {
+                if (i.user.id !== interaction.user.id) {
+                    return i.reply({
+                        content: `Only **${interaction.user.username}** can use this button`,
+                        ephemeral: true
+                    }).catch(console.error);
+                }
+
+                try {
+                    if (i.customId === `view_image_${interaction.id}`) {
+                        currentView = 'image';
+                        const borderedImageUrl = `${process.env.IMAGE_BASE_URL}/${card.bordered_image}`;
+                        const imageBuffer = await resolveImageBuffer(borderedImageUrl);
+                        const fullImageAttachment = new AttachmentBuilder(imageBuffer, { name: 'full_card.png' });
+                        
+                        const imageEmbed = new EmbedBuilder()
+                            .setTitle(card.name)
+                            .setImage('attachment://full_card.png')
+                            .setColor('#5865F2');
+
+                        await i.update({
+                            embeds: [imageEmbed],
+                            files: [fullImageAttachment],
+                            components: [backToInfoButton]
+                        }).catch(console.error);
+
+                        infoCollector.resetTimer();
+                    } else if (i.customId === `back_to_info_${interaction.id}`) {
+                        currentView = 'info';
+                        const infoData = await createCardInfoEmbed(card);
+                        
+                        await i.update({
+                            embeds: [infoData.embed],
+                            files: infoData.files,
+                            components: [buttons]
+                        }).catch(console.error);
+
+                        infoCollector.resetTimer();
+                    } else if (i.customId === `back_to_sets_${interaction.id}`) {
+                        infoCollector.stop();
+                        await showSetSelection(i, card.name, card.edition);
+                    }
+                } catch (error) {
+                    console.error('Error handling card info interaction:', error);
+                }
+            });
+
+            infoCollector.on('end', async () => {
+                if (currentView === 'info') {
+                    await message.edit({
+                        embeds: [infoData.embed],
+                        files: infoData.files,
+                        components: []
+                    }).catch(console.error);
+                } else if (currentView === 'image') {
+                    try {
+                        const borderedImageUrl = `${process.env.IMAGE_BASE_URL}/${card.bordered_image}`;
+                        const imageBuffer = await resolveImageBuffer(borderedImageUrl);
+                        const fullImageAttachment = new AttachmentBuilder(imageBuffer, { name: 'full_card.png' });
+                        
+                        const imageEmbed = new EmbedBuilder()
+                            .setTitle(card.name)
+                            .setImage('attachment://full_card.png')
+                            .setColor('#5865F2');
+
+                        await message.edit({
+                            embeds: [imageEmbed],
+                            files: [fullImageAttachment],
+                            components: []
+                        }).catch(console.error);
+                    } catch (error) {
+                        console.error('Error in info collector end:', error);
+                    }
+                }
+            });
         }
 
         /**
@@ -457,7 +420,7 @@ module.exports = {
             const circulation = circulationResult ? circulationResult.count : 0;
 
             // Get set name
-            const setResult = await get('SELECT name FROM sets WHERE id = ?', [card.set]);
+            const setResult = await get('SELECT name FROM sets WHERE id = ?', [card.set_id]);
             const setName = setResult ? setResult.name : 'Unknown';
 
             // Create embed
@@ -477,12 +440,10 @@ module.exports = {
             // Attach the raw card image
             const files = [];
             try {
-                const imagePath = card.image.replace('.\\src\\', './src/');
-                if (fs.existsSync(imagePath)) {
-                    const imageBuffer = fs.readFileSync(imagePath);
-                    files.push(new AttachmentBuilder(imageBuffer, { name: 'card_image.png' }));
-                    embed.setThumbnail('attachment://card_image.png');
-                }
+                const imageUrl = `${process.env.IMAGE_BASE_URL}/${card.image}`;
+                const imageBuffer = await resolveImageBuffer(imageUrl);
+                files.push(new AttachmentBuilder(imageBuffer, { name: 'card_image.png' }));
+                embed.setThumbnail('attachment://card_image.png');
             } catch (error) {
                 console.error('Error reading card image:', error);
             }
@@ -491,34 +452,24 @@ module.exports = {
         }
     },
     name: 'search',
-    description: 'Search for cards in the database',
+    description: 'Search for cards by character name and edition',
     devOnly: false,
     options: [
         {
             name: 'name',
-            description: 'The name of the card',
+            description: 'The name of the character',
             type: ApplicationCommandOptionType.String,
             required: true
         },
         {
-            name: 'set',
-            description: 'The set of this card',
+            name: 'edition',
+            description: 'Which edition of this character?',
             type: ApplicationCommandOptionType.Integer,
-            required: false,
-            choices: [
-                {
-                    name: 'Alpha',
-                    value: 1
-                },
-                {
-                    name: 'Christmas',
-                    value: 2
-                }
-            ]
+            required: false
         },
         {
             name: 'sort',
-            description: 'The way you wanna sort your search',
+            description: 'How to sort your search',
             type: ApplicationCommandOptionType.String,
             required: false,
             choices: [
@@ -531,36 +482,14 @@ module.exports = {
                     value: 'name DESC'
                 },
                 {
-                    name: 'Dropped',
-                    value: 'dropped ASC'
+                    name: 'Edition Low-High',
+                    value: 'edition ASC'
                 },
                 {
-                    name: 'Grabbed',
-                    value: 'grabbed ASC'
-                },
-                {
-                    name: 'Set A-Z',
-                    value: 'set ASC'
-                },
-                {
-                    name: 'Set Z-A',
-                    value: 'set DESC'
-                },
-                {
-                    name: 'Newest',
-                    value: 'id DESC'
-                },
-                {
-                    name: 'Oldest',
-                    value: 'id ASC'
+                    name: 'Edition High-Low',
+                    value: 'edition DESC'
                 }
             ]
-        },
-        {
-            name: 'edition',
-            description: 'Which edition is this card?',
-            type: ApplicationCommandOptionType.Integer,
-            required: false
-        },
+        }
     ]
 }

@@ -321,7 +321,11 @@
     <div class="container">
         <div class="page-header">
             <h2>Manage Owned Cards</h2>
-            <button class="btn btn-primary" onclick="openModal('generate-modal')">Generate Card</button>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn" onclick="location.reload()" title="Refresh page">🔄 Refresh</button>
+                <button class="btn btn-danger" onclick="bulkDeleteOwnedCards()" title="Delete selected">🗑️ Delete Selected</button>
+                <button class="btn btn-primary" onclick="openModal('generate-modal')">Generate Card</button>
+            </div>
         </div>
 
         <div id="message" class="message"></div>
@@ -354,6 +358,7 @@
         <table>
             <thead>
                 <tr>
+                    <th><input type="checkbox" onclick="toggleAllCheckboxes(this, '.owned-card-checkbox')"></th>
                     <th>ID</th>
                     <th>Card Name</th>
                     <th>Print #</th>
@@ -372,6 +377,7 @@
                     data-name="<%= (card.card_name || '').toLowerCase() %>"
                     data-print="<%= card.print %>"
                     data-owner="<%= (card.owner || '').toLowerCase() %>">
+                    <td><input type="checkbox" class="owned-card-checkbox" value="<%= card.id %>"></td>
                     <td><strong><%= card.id %></strong></td>
                     <td><%= card.card_name || 'Unknown' %></td>
                     <td>#<%= card.print %></td>
@@ -710,6 +716,46 @@
             });
             
             resultsContainer.style.display = 'block';
+        }
+
+        // Bulk delete owned cards
+        function bulkDeleteOwnedCards() {
+            const checkboxes = document.querySelectorAll('.owned-card-checkbox:checked');
+            const ids = Array.from(checkboxes).map(cb => cb.value);
+            
+            if (ids.length === 0) {
+                alert('Please select owned cards to delete');
+                return;
+            }
+            
+            if (!confirm(`Delete ${ids.length} owned card(s)? This cannot be undone!`)) {
+                return;
+            }
+            
+            fetch('/admin/owned-cards/bulk-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert(data.message);
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(err => {
+                console.error('Bulk delete error:', err);
+                alert('Failed to delete owned cards');
+            });
+        }
+
+        // Toggle all checkboxes
+        function toggleAllCheckboxes(source, selector) {
+            const checkboxes = document.querySelectorAll(selector);
+            checkboxes.forEach(cb => cb.checked = source.checked);
         }
     </script>
 </body>

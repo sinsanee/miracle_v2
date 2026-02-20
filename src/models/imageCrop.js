@@ -4,7 +4,7 @@ async function cropImage(buffer, cropMode) {
   const isStretch = cropMode === "stretch";
 
   return sharp(buffer)
-    .resize(550, 600, {
+    .resize(600, 550, {
       fit: isStretch ? "fill" : "cover",
       position: isStretch ? undefined : cropMode,
       kernel: sharp.kernel.lanczos3, // High-quality resampling

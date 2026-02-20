@@ -2,8 +2,8 @@ const { Client, Interaction, ApplicationCommandOptionType, EmbedBuilder , Button
 const { all, get, run } = require('../../models/query');
 const { userExists, createUser } = require('../../models/users');
 const { cardGenFromCropped } = require('../../models/cardGen');
+const { resolveImageBuffer } = require('../../models/imageResolver'); // Import the image resolver
 const sharp = require('sharp');
-const fs = require('fs');
 
 module.exports = {
     /**
@@ -13,7 +13,7 @@ module.exports = {
     callback: async (client, interaction) => {
         await interaction.deferReply();
         const author = interaction.user.id
-        const dropTime = new Date()
+        const dropTime = Math.floor(Date.now() / 1000)
         const dropInterval = 20
         const grabInterval = 10
 
@@ -33,7 +33,7 @@ module.exports = {
             await run('UPDATE users SET lastdrop = ? WHERE userid = ?', [dropTime, author]);
         // If there is a previous drop
         } else if (lastDrop.lastdrop) {
-            const timeDiffSeconds = (dropTime - lastDrop.lastdrop) / 1000;
+            const timeDiffSeconds = (dropTime - lastDrop.lastdrop)
             // If the cooldown is over more then the interval
             if (timeDiffSeconds < dropInterval) {
                 // Logic for showing the seconds
@@ -80,7 +80,7 @@ module.exports = {
          * Pick a random card from a specific set
          */
         async function pickRandomCardFromSet(setId) {
-            const cards = await all('SELECT * FROM cards WHERE `set` = ? AND dropping = 1', [setId]);
+            const cards = await all('SELECT * FROM cards WHERE `set_id` = ? AND dropping = 1', [setId]);
             
             if (cards.length === 0) {
                 throw new Error(`No cards found in set ${setId}`);
@@ -114,11 +114,13 @@ module.exports = {
                 const printNumber = drop.card.dropped + 1;
                 drop.printNumber = printNumber;
                 
-                // Read the cropped card image
-                const croppedImageBuffer = fs.readFileSync(drop.card.image);
+                // FIXED: Download card image from web server instead of reading from disk
+                const imageUrl = `${process.env.IMAGE_BASE_URL}/${drop.card.image}`;
+                const croppedImageBuffer = await resolveImageBuffer(imageUrl);
                 
-                // Read the border
-                const borderBuffer = fs.readFileSync(drop.set.border.replace('.\\src\\', './src/'));
+                // FIXED: Download border from web server
+                const borderUrl = `${process.env.BORDER_BASE_URL}/${drop.set.border}`;
+                const borderBuffer = await resolveImageBuffer(borderUrl);
 
                 // Generate the full card with print number as subtitle
                 const cardImage = await cardGenFromCropped(
@@ -184,19 +186,19 @@ module.exports = {
                     .setStyle(ButtonStyle.Primary)
             );
 
-            // Send the drop
-            const message = await interaction.editReply({
+            // Send the message
+            const response = await interaction.editReply({
                 embeds: [embed],
                 files: [attachment],
                 components: [buttons]
             });
 
-            // Store the dropped cards temporarily for claiming
-            const activeDrops = new Map();
-            activeDrops.set(message.id, {
-                cards: droppedCards,
+            // Store drop data
+            const activeDrops = client.activeDrops || (client.activeDrops = new Map());
+            
+            activeDrops.set(response.id, {
                 dropper: author,
-                dropTime: Date.now(),
+                cards: droppedCards,
                 expired: false,
                 cardFights: {
                     0: { fighters: [], resolved: false },
@@ -205,112 +207,79 @@ module.exports = {
                 }
             });
 
-            // Expire drop after 60 seconds
+            // Set expiration timer (30 seconds)
             setTimeout(() => {
-                const dropState = activeDrops.get(message.id);
+                const dropState = activeDrops.get(response.id);
                 if (dropState) {
                     dropState.expired = true;
+                    
+                    // Remove buttons
                     interaction.editReply({
                         embeds: [embed],
                         files: [attachment],
                         components: []
                     }).catch(console.error);
-                    activeDrops.delete(message.id);
+                    
+                    // Clean up after 5 more seconds
+                    setTimeout(() => {
+                        activeDrops.delete(response.id);
+                    }, 5000);
                 }
-            }, 60000);
+            }, 30000);
 
-            /**
-             * Generate next sequential ID for owned_cards
-             * Pattern: 1-9, A-Z, 11-19, 1A-1Z, 21-29, 2A-2Z, ..., A1-A9, AA-AZ, ...
-             */
+            // Generate next sequential ID (for owned_cards)
             async function generateNextId() {
-                // Get the last ID from database
-                const lastCard = await get('SELECT id FROM owned_cards ORDER BY ROWID DESC LIMIT 1');
+                const lastCard = await get(
+                    'SELECT id FROM owned_cards ORDER BY id DESC LIMIT 1'
+                );
                 
                 if (!lastCard || !lastCard.id) {
-                    return '1'; // Start with 1
-                }
-
-                const currentId = lastCard.id;
-                
-                /**
-                 * Increment ID following the pattern
-                 */
-                function incrementId(id) {
-                    // Helper to check if character is a digit
-                    const isDigit = (char) => char >= '0' && char <= '9';
-                    // Helper to check if character is a letter
-                    const isLetter = (char) => char >= 'A' && char <= 'Z';
-                    
-                    // Convert to uppercase for consistency
-                    id = id.toUpperCase();
-                    
-                    // Single character IDs (1-9, then A-Z)
-                    if (id.length === 1) {
-                        if (isDigit(id)) {
-                            if (id === '9') return 'A';
-                            return String(parseInt(id) + 1);
-                        }
-                        if (isLetter(id)) {
-                            if (id === 'Z') return '11';
-                            return String.fromCharCode(id.charCodeAt(0) + 1);
-                        }
-                    }
-                    
-                    // Multi-character IDs
-                    const chars = id.split('');
-                    
-                    // Try to increment from right to left
-                    for (let i = chars.length - 1; i >= 0; i--) {
-                        const char = chars[i];
-                        
-                        if (isDigit(char)) {
-                            if (char === '9') {
-                                chars[i] = 'A';
-                                return chars.join('');
-                            } else {
-                                chars[i] = String(parseInt(char) + 1);
-                                return chars.join('');
-                            }
-                        }
-                        
-                        if (isLetter(char)) {
-                            if (char === 'Z') {
-                                // Need to carry over
-                                chars[i] = '1';
-                                
-                                // If we're at the leftmost position, add a new character
-                                if (i === 0) {
-                                    return '1' + chars.join('');
-                                }
-                                // Otherwise continue to increment the next position
-                                continue;
-                            } else {
-                                chars[i] = String.fromCharCode(char.charCodeAt(0) + 1);
-                                return chars.join('');
-                            }
-                        }
-                    }
-                    
-                    // Fallback (shouldn't reach here in normal circumstances)
-                    return '1' + id;
+                    return 'AAA-001';
                 }
                 
-                return incrementId(currentId);
+                const parts = lastCard.id.split('-');
+                const prefix = parts[0];
+                let number = parseInt(parts[1]);
+                
+                number++;
+                
+                if (number > 999) {
+                    const nextPrefix = incrementPrefix(prefix);
+                    return `${nextPrefix}-001`;
+                }
+                
+                return `${prefix}-${number.toString().padStart(3, '0')}`;
             }
 
-            /**
-             * Generate condition (1-5) with weights
-             */
+            function incrementPrefix(prefix) {
+                const chars = prefix.split('');
+                let carry = true;
+                
+                for (let i = chars.length - 1; i >= 0 && carry; i--) {
+                    if (chars[i] === 'Z') {
+                        chars[i] = 'A';
+                    } else {
+                        chars[i] = String.fromCharCode(chars[i].charCodeAt(0) + 1);
+                        carry = false;
+                    }
+                }
+                
+                if (carry) {
+                    chars.unshift('A');
+                }
+                
+                return chars.join('');
+            }
+
             function generateCondition() {
-                const weights = [1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 5, 5];
-                const randomIndex = Math.floor(Math.random() * weights.length);
-                return weights[randomIndex];
+                const rand = Math.random();
+                if (rand < 0.05) return 1;      // 5% Poor
+                if (rand < 0.15) return 2;      // 10% Played
+                if (rand < 0.40) return 3;      // 25% Good
+                if (rand < 0.75) return 4;      // 35% Near Mint
+                return 5;                       // 25% Mint
             }
 
-            /**
-             * Convert condition number to text
-             */
             function conditionToText(condition) {
                 const conditions = {
                     1: 'Poor',
@@ -360,7 +329,7 @@ module.exports = {
                 const claimerUserId = interaction.user.id;
 
                 if (!(await userExists(claimerUserId))) {
-                    return interaction.editReply({
+                    return interaction.reply({
                         content: 'You are not registered!',
                         ephemeral: true
                     });
@@ -368,10 +337,10 @@ module.exports = {
 
                 // Check grab cooldown
                 const lastGrab = await get('SELECT lastgrab FROM users WHERE userid = ?', [claimerUserId]);
-                const grabTime = new Date();
+                const grabTime = Math.floor(Date.now() / 1000)
                 
                 if (lastGrab && lastGrab.lastgrab) {
-                    const timeDiffSeconds = (grabTime - lastGrab.lastgrab) / 1000;
+                    const timeDiffSeconds = (grabTime - lastGrab.lastgrab)
                     if (timeDiffSeconds < grabInterval) {
                         const remainingTime = grabInterval - timeDiffSeconds;
                         const seconds = Math.floor(remainingTime % 60);

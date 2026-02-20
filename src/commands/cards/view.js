@@ -1,7 +1,7 @@
 const { Client, Interaction, ApplicationCommandOptionType, EmbedBuilder , ButtonBuilder, ButtonStyle, ActionRowBuilder, AttachmentBuilder, ComponentType, TimestampStyles,} = require('discord.js');
 const { all, get, run } = require('../../models/query');
 const { cardGenFromCropped } = require('../../models/cardGen');
-const fs = require('fs');
+const { resolveImageBuffer } = require('../../models/imageResolver'); // Import the image resolver
 
 module.exports = {
     /**
@@ -66,27 +66,13 @@ module.exports = {
             // Get owner username
             const owner = await client.users.fetch(ownedCard.owner);
 
-            // Read the cropped card image
-            const croppedImagePath = card.image.replace('.\\src\\', './src/');
-            if (!fs.existsSync(croppedImagePath)) {
-                return interaction.editReply({
-                    content: 'Card image file not found.',
-                    ephemeral: true
-                });
-            }
+            // FIXED: Download card image from web server instead of reading from disk
+            const imageUrl = `${process.env.IMAGE_BASE_URL}/${card.image}`;
+            const croppedImageBuffer = await resolveImageBuffer(imageUrl);
 
-            const croppedImageBuffer = fs.readFileSync(croppedImagePath);
-
-            // Read the border
-            const borderPath = setData.border.replace('.\\src\\', './src/');
-            if (!fs.existsSync(borderPath)) {
-                return interaction.editReply({
-                    content: 'Border image file not found.',
-                    ephemeral: true
-                });
-            }
-
-            const borderBuffer = fs.readFileSync(borderPath);
+            // FIXED: Download border from web server
+            const borderUrl = `${process.env.BORDER_BASE_URL}/${setData.border}`;
+            const borderBuffer = await resolveImageBuffer(borderUrl);
 
             // Generate the card with ID as subtitle and print as footer
             const generatedCard = await cardGenFromCropped(

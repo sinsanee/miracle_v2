@@ -6,6 +6,7 @@ const path = require('path');
 require('./models/font'); // ← Make sure this is here!
 const multer = require('multer');
 const fs = require('fs').promises;
+const sharp = require('sharp');
 const { cardGen } = require('./models/cardGen');
 const { resolveImageBuffer } = require('./models/imageResolver');
 const { cropImage } = require('./models/imageCrop');
@@ -346,19 +347,11 @@ app.post('/admin/cards/create-with-image', isAdmin, upload.single('image'), asyn
   try {
     const { name, edition, set_id, set_name, imageUrl, cropMode, dropping, scheduled_drop } = req.body;
     let imageBuffer;
-    let rawImageFilename = null;
 
     if (req.file) {
       imageBuffer = await fs.readFile(req.file.path);
-      
-      // Save the raw image to permanent location
-      rawImageFilename = `raw_${Date.now()}_${req.file.originalname}`;
-      const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
-      await fs.copyFile(req.file.path, rawImagePath);
-      
     } else if (imageUrl) {
       imageBuffer = await resolveImageBuffer(imageUrl);
-      rawImageFilename = imageUrl; // Store the URL as reference
     } else {
       return res.status(400).json({ error: 'No image provided' });
     }
@@ -380,20 +373,35 @@ app.post('/admin/cards/create-with-image', isAdmin, upload.single('image'), asyn
     }
     const border = await fs.readFile(borderPath);
 
-    const cardBuffer = await cardGen(imageBuffer, {
+    // Generate the cropped/resized image WITHOUT border (this goes in 'image' column)
+    const croppedImageBuffer = await sharp(imageBuffer)
+      .resize(550, 600, {
+        fit: cropMode === 'stretch' ? 'fill' : 'cover',
+        position: cropMode === 'stretch' ? undefined : (cropMode || 'centre')
+      })
+      .toBuffer();
+
+    // Save the cropped image (without border)
+    const croppedFilename = `${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${edition}_${Date.now()}.png`;
+    const croppedPath = path.join(__dirname, 'public/uploads/cards', croppedFilename);
+    await fs.writeFile(croppedPath, croppedImageBuffer);
+
+    // Generate the BORDERED version using cardGen (this goes in 'bordered_image' column)
+    const borderedCardBuffer = await cardGen(imageBuffer, {
       name: name,
       subtitle: ``,
       footer: ''
     }, cropMode || 'centre', border);
 
-    const cardFilename = `${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${edition}_${Date.now()}.png`;
-    const cardPath = path.join(__dirname, 'public/uploads/cards', cardFilename);
-    await fs.writeFile(cardPath, cardBuffer);
+    // Save the bordered card
+    const borderedFilename = `bordered_${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${edition}_${Date.now()}.png`;
+    const borderedPath = path.join(__dirname, 'public/uploads/cards', borderedFilename);
+    await fs.writeFile(borderedPath, borderedCardBuffer);
 
     await query(`
       INSERT INTO cards (name, edition, set_id, image, bordered_image, dropping, scheduled_drop) 
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [name, edition, finalSetId, rawImageFilename, cardFilename, dropping, scheduled_drop || null]);
+    `, [name, edition, finalSetId, croppedFilename, borderedFilename, dropping, scheduled_drop || null]);
 
     if (req.file) {
       await fs.unlink(req.file.path).catch(() => {}); // Clean up temp file after copying
@@ -408,8 +416,10 @@ app.post('/admin/cards/create-with-image', isAdmin, upload.single('image'), asyn
 
 app.post('/admin/cards/bulk-create', isAdmin, upload.array('images', 50), async (req, res) => {
   try {
-    const { set_id, set_name, cropMode, dropping, scheduled_drop, cardsData } = req.body;
+    const { set_id, set_name, dropping, scheduled_drop, cardsData, imageUrls, cropModes } = req.body;
     const cards = JSON.parse(cardsData);
+    const urls = imageUrls ? JSON.parse(imageUrls) : [];
+    const modes = cropModes ? JSON.parse(cropModes) : [];
     
     let finalSetId = set_id;
     
@@ -429,22 +439,41 @@ app.post('/admin/cards/bulk-create', isAdmin, upload.array('images', 50), async 
     const border = await fs.readFile(borderPath);
 
     let created = 0;
-    for (let i = 0; i < cards.length && i < req.files.length; i++) {
+    for (let i = 0; i < cards.length; i++) {
       const card = cards[i];
-      const file = req.files[i];
+      const cropMode = modes[i] || 'centre';
+      let imageBuffer;
+      let rawImageFilename;
 
-      const imageBuffer = await fs.readFile(file.path);
-      
-      // Save raw image
-      const rawImageFilename = `raw_${Date.now()}_${i}_${file.originalname}`;
-      const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
-      await fs.copyFile(file.path, rawImagePath);
+      // Get image from file upload or URL
+      if (req.files[i] && req.files[i].size > 0) {
+        // File was uploaded
+        const file = req.files[i];
+        imageBuffer = await fs.readFile(file.path);
+        
+        // Save raw image
+        rawImageFilename = `raw_${Date.now()}_${i}_${file.originalname}`;
+        const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
+        await fs.copyFile(file.path, rawImagePath);
+        
+        await fs.unlink(file.path).catch(() => {}); // Clean up temp file
+      } else if (urls[i]) {
+        // URL was provided
+        imageBuffer = await resolveImageBuffer(urls[i]);
+        
+        // Save raw image from URL
+        rawImageFilename = `raw_${Date.now()}_${i}_url.png`;
+        const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
+        await fs.writeFile(rawImagePath, imageBuffer);
+      } else {
+        continue; // Skip if no image
+      }
 
       const cardBuffer = await cardGen(imageBuffer, {
         name: card.name,
         subtitle: ``,
         footer: ''
-      }, cropMode || 'centre', border);
+      }, cropMode, border);
 
       const cardFilename = `${card.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${card.edition}_${Date.now()}_${i}.png`;
       const cardPath = path.join(__dirname, 'public/uploads/cards', cardFilename);
@@ -455,7 +484,6 @@ app.post('/admin/cards/bulk-create', isAdmin, upload.array('images', 50), async 
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `, [card.name, card.edition, finalSetId, rawImageFilename, cardFilename, dropping, scheduled_drop || null]);
 
-      await fs.unlink(file.path).catch(() => {}); // Clean up temp file
       created++;
     }
 
@@ -475,25 +503,88 @@ app.get('/admin/cards/:id', isAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/cards/:id/update', isAdmin, async (req, res) => {
-  const { name, edition, set_id, set_name, image, dropping, scheduled_drop } = req.body;
-  
+app.post('/admin/cards/:id/update', isAdmin, upload.single('image'), async (req, res) => {
   try {
+    const { name, edition, set_id, set_name, imageUrl, cropMode, dropping, scheduled_drop } = req.body;
+    const cardId = req.params.id;
+    
+    // Get existing card data
+    const existingCard = await queryOne('SELECT * FROM cards WHERE id = ?', [cardId]);
+    
+    if (!existingCard) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
+    
     let finalSetId = set_id;
     
     if (set_name && !set_id) {
-      const result = await query('INSERT INTO sets (name) VALUES (?)', [set_name]);
+      const result = await query('INSERT INTO sets (name, border, rarity, creator, available, `default`) VALUES (?, ?, ?, ?, ?, ?)', 
+        [set_name, '', 100, '', 1, 0]);
       finalSetId = result.insertId;
     }
     
+    // Use existing images if no new image provided
+    let newImageFilename = existingCard.image;
+    let newBorderedFilename = existingCard.bordered_image;
+    
+    // Check if new image was provided
+    if (req.file || imageUrl) {
+      let imageBuffer;
+      
+      if (req.file) {
+        imageBuffer = await fs.readFile(req.file.path);
+        
+        // Save raw image
+        const rawImageFilename = `raw_${Date.now()}_${req.file.originalname}`;
+        const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
+        await fs.copyFile(req.file.path, rawImagePath);
+        newImageFilename = rawImageFilename;
+        
+      } else if (imageUrl) {
+        imageBuffer = await resolveImageBuffer(imageUrl);
+        newImageFilename = imageUrl;
+      }
+      
+      // Generate new bordered card
+      const setData = await queryOne('SELECT name, border FROM sets WHERE id = ?', [finalSetId]);
+      
+      let borderPath;
+      if (setData && setData.border) {
+        borderPath = path.join(__dirname, 'public/uploads/borders', setData.border);
+      } else {
+        borderPath = path.join(__dirname, 'assets', 'border.png');
+      }
+      
+      const border = await fs.readFile(borderPath);
+      
+      const cardBuffer = await cardGen(imageBuffer, {
+        name: name,
+        subtitle: ``,
+        footer: ''
+      }, cropMode || 'centre', border);
+      
+      const cardFilename = `${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${edition}_${Date.now()}.png`;
+      const cardPath = path.join(__dirname, 'public/uploads/cards', cardFilename);
+      await fs.writeFile(cardPath, cardBuffer);
+      
+      newBorderedFilename = cardFilename;
+      
+      // Clean up temp file
+      if (req.file) {
+        await fs.unlink(req.file.path).catch(() => {});
+      }
+    }
+    
+    // Update card
     await query(`
       UPDATE cards 
-      SET name = ?, edition = ?, set_id = ?, image = ?, dropping = ?, scheduled_drop = ? 
+      SET name = ?, edition = ?, set_id = ?, image = ?, bordered_image = ?, dropping = ?, scheduled_drop = ? 
       WHERE id = ?
-    `, [name, edition, finalSetId, image || null, dropping, scheduled_drop || null, req.params.id]);
+    `, [name, edition, finalSetId, newImageFilename, newBorderedFilename, dropping, scheduled_drop || null, cardId]);
     
     res.json({ success: true, message: 'Card updated successfully' });
   } catch (error) {
+    console.error('Card update error:', error);
     res.status(500).json({ error: 'Failed to update card: ' + error.message });
   }
 });
@@ -543,11 +634,15 @@ app.post('/admin/cards/:id/delete', isAdmin, async (req, res) => {
 
 app.post('/admin/cards/:id/delete-copies', isAdmin, async (req, res) => {
   try {
+    // Delete all owned copies
     const result = await query('DELETE FROM owned_cards WHERE card = ?', [req.params.id]);
+    
+    // Reset the dropped and grabbed stats for the card
+    await query('UPDATE cards SET dropped = 0, grabbed = 0 WHERE id = ?', [req.params.id]);
     
     res.json({ 
       success: true, 
-      message: `Deleted ${result.affectedRows} owned copies` 
+      message: `Deleted ${result.affectedRows} owned copies and reset card stats` 
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete copies' });
@@ -596,10 +691,11 @@ app.post('/admin/owned-cards/generate', isAdmin, async (req, res) => {
     const printResult = await queryOne('SELECT COUNT(*) as count FROM owned_cards WHERE card = ?', [card_id]);
     const print = (printResult.count || 0) + 1;
     
-    const id = generateUniqueId({ prepare: (sql) => ({ get: async (params) => await queryOne(sql, params) }) });
+    // Generate sequential ID
+    const id = await generateUniqueId();
     
     await query(`
-      INSERT INTO owned_cards (id, card, print, dropper, grabber, owner, condition)
+      INSERT INTO owned_cards (id, card, print, dropper, grabber, owner, \`condition\`)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [id, card_id, print, dropper || null, grabber || null, owner || null, condition || 100]);
     
@@ -616,7 +712,7 @@ app.post('/admin/owned-cards/:id/update', isAdmin, async (req, res) => {
   try {
     await query(`
       UPDATE owned_cards 
-      SET dropper = ?, grabber = ?, owner = ?, condition = ?
+      SET dropper = ?, grabber = ?, owner = ?, \`condition\` = ?
       WHERE id = ?
     `, [dropper || null, grabber || null, owner || null, condition, req.params.id]);
     
@@ -782,10 +878,11 @@ app.post('/admin/auctions/create', isAdmin, async (req, res) => {
       const printResult = await queryOne('SELECT COUNT(*) as count FROM owned_cards WHERE card = ?', [cardId]);
       const print = (printResult.count || 0) + 1;
       
-      const ownedCardId = generateUniqueId({ prepare: (sql) => ({ get: async (params) => await queryOne(sql, params) }) });
+      // Generate sequential ID
+      const ownedCardId = await generateUniqueId();
       
       await query(`
-        INSERT INTO owned_cards (id, card, print, owner, condition)
+        INSERT INTO owned_cards (id, card, print, owner, \`condition\`)
         VALUES (?, ?, ?, ?, ?)
       `, [ownedCardId, cardId, print, '1', 5]);
       
@@ -847,6 +944,156 @@ app.post('/admin/auctions/:id/delete', isAdmin, async (req, res) => {
 app.get('/logout', (req, res) => {
   req.session.destroy();
   res.redirect('/');
+});
+
+// Bulk Delete Routes
+app.post('/admin/cards/bulk-delete', isAdmin, async (req, res) => {
+  const { ids } = req.body;
+  
+  try {
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'No cards selected' });
+    }
+    
+    const placeholders = ids.map(() => '?').join(',');
+    await query(`DELETE FROM cards WHERE id IN (${placeholders})`, ids);
+    
+    res.json({ success: true, message: `Deleted ${ids.length} card(s)` });
+  } catch (error) {
+    console.error('Bulk delete cards error:', error);
+    res.status(500).json({ error: 'Failed to delete cards' });
+  }
+});
+
+app.post('/admin/owned-cards/bulk-delete', isAdmin, async (req, res) => {
+  const { ids } = req.body;
+  
+  try {
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'No cards selected' });
+    }
+    
+    const placeholders = ids.map(() => '?').join(',');
+    await query(`DELETE FROM owned_cards WHERE id IN (${placeholders})`, ids);
+    
+    res.json({ success: true, message: `Deleted ${ids.length} owned card(s)` });
+  } catch (error) {
+    console.error('Bulk delete owned cards error:', error);
+    res.status(500).json({ error: 'Failed to delete owned cards' });
+  }
+});
+
+app.post('/admin/sets/bulk-delete', isAdmin, async (req, res) => {
+  const { ids } = req.body;
+  
+  try {
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'No sets selected' });
+    }
+    
+    const placeholders = ids.map(() => '?').join(',');
+    await query(`DELETE FROM sets WHERE id IN (${placeholders})`, ids);
+    
+    res.json({ success: true, message: `Deleted ${ids.length} set(s)` });
+  } catch (error) {
+    console.error('Bulk delete sets error:', error);
+    res.status(500).json({ error: 'Failed to delete sets' });
+  }
+});
+
+app.post('/admin/items/bulk-delete', isAdmin, async (req, res) => {
+  const { ids } = req.body;
+  
+  try {
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'No items selected' });
+    }
+    
+    const placeholders = ids.map(() => '?').join(',');
+    await query(`DELETE FROM items WHERE id IN (${placeholders})`, ids);
+    
+    res.json({ success: true, message: `Deleted ${ids.length} item(s)` });
+  } catch (error) {
+    console.error('Bulk delete items error:', error);
+    res.status(500).json({ error: 'Failed to delete items' });
+  }
+});
+
+app.post('/admin/inventory/bulk-delete', isAdmin, async (req, res) => {
+  const { ids } = req.body;
+  
+  try {
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'No inventory items selected' });
+    }
+    
+    const placeholders = ids.map(() => '?').join(',');
+    await query(`DELETE FROM inventory WHERE id IN (${placeholders})`, ids);
+    
+    res.json({ success: true, message: `Deleted ${ids.length} inventory item(s)` });
+  } catch (error) {
+    console.error('Bulk delete inventory error:', error);
+    res.status(500).json({ error: 'Failed to delete inventory items' });
+  }
+});
+
+app.post('/admin/auctions/bulk-delete', isAdmin, async (req, res) => {
+  const { ids } = req.body;
+  
+  try {
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'No auctions selected' });
+    }
+    
+    const placeholders = ids.map(() => '?').join(',');
+    await query(`DELETE FROM auctions WHERE id IN (${placeholders})`, ids);
+    
+    res.json({ success: true, message: `Deleted ${ids.length} auction(s)` });
+  } catch (error) {
+    console.error('Bulk delete auctions error:', error);
+    res.status(500).json({ error: 'Failed to delete auctions' });
+  }
+});
+
+app.post('/admin/users/bulk-delete', isAdmin, async (req, res) => {
+  const { ids } = req.body;
+  
+  try {
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'No users selected' });
+    }
+    
+    const placeholders = ids.map(() => '?').join(',');
+    await query(`DELETE FROM users WHERE userid IN (${placeholders})`, ids);
+    
+    res.json({ success: true, message: `Deleted ${ids.length} user(s)` });
+  } catch (error) {
+    console.error('Bulk delete users error:', error);
+    res.status(500).json({ error: 'Failed to delete users' });
+  }
+});
+
+// Reset Economy Route
+app.post('/admin/reset-economy', isAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM owned_cards');
+    console.log('Deleted all owned cards');
+    
+    await query('DELETE FROM cards');
+    console.log('Deleted all cards');
+    
+    await query('ALTER TABLE owned_cards AUTO_INCREMENT = 1');
+    await query('ALTER TABLE cards AUTO_INCREMENT = 1');
+    console.log('Reset auto-increment counters');
+    
+    res.json({ 
+      success: true, 
+      message: 'Economy reset successfully. All cards and owned cards have been deleted.' 
+    });
+  } catch (error) {
+    console.error('Reset economy error:', error);
+    res.status(500).json({ error: 'Failed to reset economy: ' + error.message });
+  }
 });
 
 app.listen(PORT, () => {
