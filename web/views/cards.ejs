@@ -772,19 +772,8 @@
                 </div>
 
                 <div class="form-group">
-                    <label>Edition</label>
-                    <div class="radio-option">
-                        <input type="radio" id="edition-existing" name="edition-type" value="existing" checked onchange="toggleEditionInputs()">
-                        <label for="edition-existing">Use Existing Edition</label>
-                    </div>
-                    <select id="edition-select" name="edition">
-                        <option value="1">Edition 1 (Default)</option>
-                    </select>
-                    
-                    <div class="radio-option" style="margin-top: 10px;">
-                        <input type="radio" id="edition-new" name="edition-type" value="new" onchange="toggleEditionInputs()">
-                        <label for="edition-new">Create New Edition (Highest + 1)</label>
-                    </div>
+                    <label for="edition-input">Edition</label>
+                    <input type="number" id="edition-input" name="edition" value="1" min="1" required>
                 </div>
 
                 <div class="form-group">
@@ -1012,12 +1001,6 @@
     <script>
         // Global variables
         var isEditMode = false;
-        var editionsData = JSON.stringify(cards.reduce((acc, card) => {
-            if (!acc[card.name] || acc[card.name] < card.edition) {
-                acc[card.name] = card.edition;
-            }
-            return acc;
-        }, {}))
 
         // Message function
         function showMessage(text, isError) {
@@ -1057,8 +1040,7 @@
         }
 
         function toggleEditionInputs() {
-            const isNew = document.getElementById('edition-new').checked;
-            document.getElementById('edition-select').disabled = isNew;
+            // no-op: kept for any residual calls
         }
 
         function toggleSchedule() {
@@ -1080,7 +1062,7 @@
 
         function updatePreview() {
             var cardName = document.getElementById('card-name').value || 'Card Name';
-            var edition = document.getElementById('edition-select').value || '1';
+            var edition = document.getElementById('edition-input').value || '1';
             var setSelect = document.getElementById('set-select');
             var setId = setSelect.value;
             var setName;
@@ -1474,7 +1456,6 @@
             document.getElementById('card-id').value = '';
             document.getElementById('card-modal').classList.add('show');
             toggleSetInputs();
-            toggleEditionInputs();
             toggleSchedule();
         }
 
@@ -1487,7 +1468,7 @@
                 .then(function(card) {
                     document.getElementById('card-id').value = card.id;
                     document.getElementById('card-name').value = card.name;
-                    document.getElementById('edition-select').value = card.edition;
+                    document.getElementById('edition-input').value = card.edition;
                     document.getElementById('set-select').value = card.set_id;
                     document.getElementById('image-url').value = card.image || '';
                     
@@ -1534,8 +1515,7 @@
         }
 
         window.toggleEditionInputs = function() {
-            const isNew = document.getElementById('edition-new').checked;
-            document.getElementById('edition-select').disabled = isNew;
+            // no-op
         }
 
         window.toggleSchedule = function() {
@@ -1574,12 +1554,7 @@
             var cardName = document.getElementById('card-name').value;
             
             // Handle edition
-            var edition = 1;
-            if (document.getElementById('edition-new').checked) {
-                edition = (editionsData[cardName] || 0) + 1;
-            } else {
-                edition = document.getElementById('edition-select').value;
-            }
+            var edition = document.getElementById('edition-input').value || 1;
             
             // Get image (file or URL)
             var imageFile = document.getElementById('card-image').files[0];
@@ -1831,23 +1806,6 @@
             document.getElementById('status-filter').value = 'all';
             filterCards();
         }
-
-        // Update edition dropdown when card name changes
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('card-name').addEventListener('input', function() {
-                var cardName = this.value;
-                var maxEdition = editionsData[cardName] || 0;
-                var select = document.getElementById('edition-select');
-                
-                select.innerHTML = '';
-                for (var i = 1; i <= Math.max(maxEdition, 1); i++) {
-                    var option = document.createElement('option');
-                    option.value = i;
-                    option.textContent = 'Edition ' + i;
-                    select.appendChild(option);
-                }
-            });
-        });
 
         // Bulk delete cards
         function bulkDeleteCards() {
