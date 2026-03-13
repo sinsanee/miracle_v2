@@ -221,15 +221,26 @@ app.get('/admin/cards', isAdmin, async (req, res) => {
     `);
     
     const sets = await query('SELECT id, name FROM sets ORDER BY name ASC');
+    const countResult = await queryOne('SELECT COUNT(*) as count FROM cards');
     
     res.render('cards', {
       username: req.session.username,
       cards: cards,
-      sets: sets
+      sets: sets,
+      cardCount: countResult.count
     });
   } catch (error) {
     console.error('Cards page error:', error);
     res.status(500).send('Error loading cards page');
+  }
+});
+
+app.get('/admin/cards/count', isAdmin, async (req, res) => {
+  try {
+    const result = await queryOne('SELECT COUNT(*) as count FROM cards');
+    res.json({ count: result.count });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get card count' });
   }
 });
 
@@ -650,6 +661,15 @@ app.post('/admin/cards/:id/delete-copies', isAdmin, async (req, res) => {
 });
 
 // Owned Cards Management
+app.get('/admin/owned-cards/count', isAdmin, async (req, res) => {
+  try {
+    const result = await queryOne('SELECT COUNT(*) as count FROM owned_cards');
+    res.json({ count: result.count });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get owned card count' });
+  }
+});
+
 app.get('/admin/owned-cards', isAdmin, async (req, res) => {
   try {
     const ownedCards = await query(`
@@ -666,11 +686,14 @@ app.get('/admin/owned-cards', isAdmin, async (req, res) => {
       LEFT JOIN sets ON cards.set_id = sets.id
       ORDER BY cards.name ASC
     `);
+
+    const countResult = await queryOne('SELECT COUNT(*) as count FROM owned_cards');
     
     res.render('owned-cards', {
       username: req.session.username,
       ownedCards: ownedCards,
-      cards: cards
+      cards: cards,
+      ownedCount: countResult.count
     });
   } catch (error) {
     console.error('Owned cards page error:', error);
@@ -1073,28 +1096,124 @@ app.post('/admin/users/bulk-delete', isAdmin, async (req, res) => {
   }
 });
 
-// Reset Economy Route
-app.post('/admin/reset-economy', isAdmin, async (req, res) => {
+// Reset Bot Route (deletes everything)
+app.post('/admin/reset-bot', isAdmin, async (req, res) => {
   try {
     await query('DELETE FROM owned_cards');
-    console.log('Deleted all owned cards');
-    
     await query('DELETE FROM cards');
-    console.log('Deleted all cards');
-    
     await query('ALTER TABLE owned_cards AUTO_INCREMENT = 1');
     await query('ALTER TABLE cards AUTO_INCREMENT = 1');
-    console.log('Reset auto-increment counters');
-    
     res.json({ 
       success: true, 
-      message: 'Economy reset successfully. All cards and owned cards have been deleted.' 
+      message: 'Bot reset successfully. All cards and owned cards have been deleted.' 
+    });
+  } catch (error) {
+    console.error('Reset bot error:', error);
+    res.status(500).json({ error: 'Failed to reset bot: ' + error.message });
+  }
+});
+
+// Reset Economy Route (only resets stats + clears owned_cards)
+app.post('/admin/reset-economy', isAdmin, async (req, res) => {
+  try {
+    await query('UPDATE cards SET dropped = 0, grabbed = 0');
+    await query('DELETE FROM owned_cards');
+    res.json({ 
+      success: true, 
+      message: 'Economy reset successfully. All drop/grab stats cleared and owned cards deleted.' 
     });
   } catch (error) {
     console.error('Reset economy error:', error);
     res.status(500).json({ error: 'Failed to reset economy: ' + error.message });
   }
 });
+
+// Sets Management Routes
+const borderStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, 'img/borders'));
+  },
+  filename: (req, file, cb) => {
+    // Keep just the original name without timestamp so we can store <filename>.png
+    const ext = path.extname(file.originalname) || '.png';
+    const base = path.basename(file.originalname, ext);
+    cb(null, base + '.png');
+  }
+});
+
+const borderUpload = multer({
+  storage: borderStorage,
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  }
+});
+
+app.get('/admin/sets', isAdmin, async (req, res) => {
+  try {
+    const sets = await query('SELECT * FROM sets ORDER BY id DESC');
+    res.render('sets', { username: req.session.username, sets });
+  } catch (error) {
+    console.error('Sets page error:', error);
+    res.status(500).send('Error loading sets page');
+  }
+});
+
+app.get('/admin/sets/data', isAdmin, async (req, res) => {
+  try {
+    const sets = await query('SELECT * FROM sets ORDER BY id DESC');
+    res.json({ sets });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to load sets' });
+  }
+});
+
+app.post('/admin/sets/create', isAdmin, borderUpload.single('border'), async (req, res) => {
+  try {
+    const { name, rarity, available } = req.body;
+    const borderFilename = req.file ? req.file.filename : null;
+
+    await query(
+      'INSERT INTO sets (name, border, rarity, available) VALUES (?, ?, ?, ?)',
+      [name, borderFilename, rarity || 100, available || 0]
+    );
+    res.json({ success: true, message: 'Set created successfully' });
+  } catch (error) {
+    console.error('Set creation error:', error);
+    res.status(500).json({ error: 'Failed to create set: ' + error.message });
+  }
+});
+
+app.post('/admin/sets/:id/update', isAdmin, borderUpload.single('border'), async (req, res) => {
+  try {
+    const { name, rarity, available } = req.body;
+    const existing = await queryOne('SELECT * FROM sets WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ error: 'Set not found' });
+
+    const borderFilename = req.file ? req.file.filename : existing.border;
+
+    await query(
+      'UPDATE sets SET name = ?, border = ?, rarity = ?, available = ? WHERE id = ?',
+      [name, borderFilename, rarity || 100, available || 0, req.params.id]
+    );
+    res.json({ success: true, message: 'Set updated successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update set: ' + error.message });
+  }
+});
+
+app.post('/admin/sets/:id/delete', isAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM sets WHERE id = ?', [req.params.id]);
+    res.json({ success: true, message: 'Set deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete set' });
+  }
+});
+
+// Serve border images from img/borders
+app.use('/img/borders', express.static(path.join(__dirname, 'img/borders')));
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

@@ -320,9 +320,14 @@
 
     <div class="container">
         <div class="page-header">
-            <h2>Manage Owned Cards</h2>
+            <div>
+                <h2>Manage Owned Cards</h2>
+                <div style="margin-top: 8px; font-size: 1rem; color: var(--accent); font-family: 'Rajdhani', sans-serif; font-weight: 600;">
+                    Cards in circulation: <span id="owned-count"><%- ownedCount %></span>
+                </div>
+            </div>
             <div style="display: flex; gap: 10px;">
-                <button class="btn" onclick="location.reload()" title="Refresh page">🔄 Refresh</button>
+                <button class="btn" onclick="refreshPage()" title="Refresh page">🔄 Refresh</button>
                 <button class="btn btn-danger" onclick="bulkDeleteOwnedCards()" title="Delete selected">🗑️ Delete Selected</button>
                 <button class="btn btn-primary" onclick="openModal('generate-modal')">Generate Card</button>
             </div>
@@ -483,6 +488,10 @@
     </div>
 
     <script>
+        function refreshPage() {
+            location.reload();
+        }
+
         function showMessage(text, isError) {
             var message = document.getElementById('message');
             message.textContent = text;

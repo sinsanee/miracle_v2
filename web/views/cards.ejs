@@ -651,6 +651,7 @@
     <nav class="navbar">
         <h1>CARD MANAGEMENT</h1>
         <div class="navbar-right">
+            <a href="/admin/sets" class="btn">Sets</a>
             <a href="/admin" class="btn">User Management</a>
             <a href="/dashboard" class="btn">Dashboard</a>
             <a href="/logout" class="btn">Logout</a>
@@ -659,16 +660,24 @@
 
     <div class="container">
         <div class="page-header">
-            <h2>Manage Cards</h2>
-            <div style="display: flex; gap: 10px;">
-                <button class="btn" onclick="location.reload()" title="Refresh page">
+            <div>
+                <h2>Manage Cards</h2>
+                <div id="card-count-label" style="margin-top: 8px; font-size: 1rem; color: var(--accent); font-family: 'Rajdhani', sans-serif; font-weight: 600;">
+                    Cards in bot: <span id="card-count"><%- cardCount %></span>
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+                <button class="btn" onclick="refreshPage()" title="Refresh page">
                     🔄 Refresh
                 </button>
                 <button class="btn btn-danger" onclick="bulkDeleteCards()" title="Delete selected cards">
                     🗑️ Delete Selected
                 </button>
-                <button class="btn" style="background: #dc3545; border-color: #dc3545;" onclick="resetEconomy()" title="WARNING: Deletes ALL cards and owned cards">
-                    ⚠️ Reset Economy
+                <button class="btn" style="background: #6d1a6d; border-color: #9c27b0;" onclick="resetEconomy()" title="Resets all drop/grab stats and clears owned cards">
+                    💸 Reset Economy
+                </button>
+                <button class="btn" style="background: #dc3545; border-color: #dc3545;" onclick="resetBot()" title="WARNING: Deletes ALL cards and owned cards">
+                    ⚠️ Reset Bot
                 </button>
                 <button class="btn btn-primary" onclick="openBulkModal()">+ Bulk Add Cards</button>
                 <button class="btn btn-primary" onclick="openCreateModal()">+ Add New Card</button>
@@ -1874,39 +1883,53 @@
             });
         }
 
-        // Reset economy
+        // Refresh page
+        function refreshPage() {
+            location.reload();
+        }
+
+        // Reset bot (deletes ALL cards + owned cards)
+        function resetBot() {
+            const confirmation = prompt('⚠️ WARNING: This will DELETE ALL CARDS and ALL OWNED CARDS!\n\nType "RESET BOT" to confirm (case sensitive):');
+            if (confirmation !== 'RESET BOT') {
+                alert('Reset cancelled - incorrect confirmation text');
+                return;
+            }
+            const doubleCheck = confirm('Are you ABSOLUTELY SURE? This action CANNOT be undone!\n\nAll card data and ownership will be permanently lost.');
+            if (!doubleCheck) { alert('Reset cancelled'); return; }
+
+            fetch('/admin/reset-bot', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) { alert('✅ ' + data.message); location.reload(); }
+                else { alert('❌ Error: ' + data.error); }
+            })
+            .catch(err => { alert('❌ Failed to reset bot'); });
+        }
+
+        // Reset economy (zeros drop/grab stats + deletes all owned cards)
         function resetEconomy() {
-            const confirmation = prompt('⚠️ WARNING: This will DELETE ALL CARDS and ALL OWNED CARDS!\\n\\nType "RESET ECONOMY" to confirm (case sensitive):');
-            
+            const confirmation = prompt('⚠️ WARNING: This will reset all drop/grab stats to 0 and delete ALL OWNED CARDS!\n\nType "RESET ECONOMY" to confirm (case sensitive):');
             if (confirmation !== 'RESET ECONOMY') {
                 alert('Reset cancelled - incorrect confirmation text');
                 return;
             }
-            
-            const doubleCheck = confirm('Are you ABSOLUTELY SURE? This action CANNOT be undone!\\n\\nAll card data and ownership will be permanently lost.');
-            
-            if (!doubleCheck) {
-                alert('Reset cancelled');
-                return;
-            }
-            
+            const doubleCheck = confirm('Are you ABSOLUTELY SURE? Drop/grab stats will be zeroed and all owned cards deleted.');
+            if (!doubleCheck) { alert('Reset cancelled'); return; }
+
             fetch('/admin/reset-economy', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
-                    alert('✅ ' + data.message);
-                    location.reload();
-                } else {
-                    alert('❌ Error: ' + data.error);
-                }
+                if (data.success) { alert('✅ ' + data.message); location.reload(); }
+                else { alert('❌ Error: ' + data.error); }
             })
-            .catch(err => {
-                console.error('Reset economy error:', err);
-                alert('❌ Failed to reset economy');
-            });
+            .catch(err => { alert('❌ Failed to reset economy'); });
         }
     </script>
 </body>
