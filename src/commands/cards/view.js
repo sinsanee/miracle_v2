@@ -60,7 +60,7 @@ module.exports = {
             }
 
             // Get set name
-            const setData = await get('SELECT name, border FROM sets WHERE id = ?', [card.set]);
+            const setData = await get('SELECT name, border FROM sets WHERE id = ?', [card.set_id]);
             const setName = setData ? setData.name : 'Unknown';
 
             // Get owner username
@@ -82,7 +82,8 @@ module.exports = {
                     subtitle: ownedCard.id,
                     footer: `${ownedCard.print}`
                 },
-                borderBuffer
+                borderBuffer,
+                ownedCard.condition ?? 5
             );
 
             // Create attachment

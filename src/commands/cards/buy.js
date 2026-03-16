@@ -8,7 +8,8 @@ const {
     ActionRowBuilder,
 } = require('discord.js');
 const { get, run } = require('../../models/query');
-const { getUser } = require('../../models/users');
+
+const GOLD_ITEM_ID = 7;
 
 module.exports = {
     /**
@@ -42,16 +43,12 @@ module.exports = {
 
             const totalCost = item.shopprice * amount;
 
-            // Fetch user gold
-            const user = await getUser(userId);
-
-            if (!user) {
-                return interaction.editReply({
-                    content: "You don't have an account yet. Try using another command first to get started!"
-                });
-            }
-
-            const userGold = user.gold ?? 0;
+            // Fetch user gold from inventory (item ID 7)
+            const goldRow = await get(
+                'SELECT amount FROM inventory WHERE userid = ? AND itemid = ?',
+                [userId, GOLD_ITEM_ID]
+            );
+            const userGold = goldRow?.amount ?? 0;
 
             if (userGold < totalCost) {
                 const shortage = totalCost - userGold;
@@ -120,8 +117,11 @@ module.exports = {
                 }
 
                 // Confirmed — re-check gold to guard against race conditions
-                const freshUser = await getUser(userId);
-                const freshGold = freshUser?.gold ?? 0;
+                const freshGoldRow = await get(
+                    'SELECT amount FROM inventory WHERE userid = ? AND itemid = ?',
+                    [userId, GOLD_ITEM_ID]
+                );
+                const freshGold = freshGoldRow?.amount ?? 0;
 
                 if (freshGold < totalCost) {
                     return i.update({
@@ -134,10 +134,10 @@ module.exports = {
                     });
                 }
 
-                // Deduct gold
+                // Deduct gold from inventory
                 await run(
-                    'UPDATE users SET gold = gold - ? WHERE userid = ?',
-                    [totalCost, userId]
+                    'UPDATE inventory SET amount = amount - ? WHERE userid = ? AND itemid = ?',
+                    [totalCost, userId, GOLD_ITEM_ID]
                 );
 
                 // Add to inventory (upsert: if item already exists, add to amount)

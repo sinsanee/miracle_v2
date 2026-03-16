@@ -61,11 +61,11 @@ module.exports = {
             // Find the maximum rarity value
             const maxRarity = Math.max(...sets.map(s => s.rarity));
 
-            // Create weighted array based on inverted rarity
-            // Higher rarity number = fewer entries = more rare
+            // Weight = maxRarity / set.rarity so rarity=1 is most common,
+            // rarity=5555 is ultra rare. Using Math.round to get integer weights.
             const weightedSets = [];
             sets.forEach(set => {
-                const weight = maxRarity - set.rarity + 1;
+                const weight = Math.max(1, Math.round(maxRarity / set.rarity));
                 for (let i = 0; i < weight; i++) {
                     weightedSets.push(set);
                 }
@@ -90,6 +90,26 @@ module.exports = {
             return cards[randomIndex];
         }
 
+        function generateCondition() {
+            const rand = Math.random();
+            if (rand < 0.05) return 1;      // 5% Poor
+            if (rand < 0.15) return 2;      // 10% Played
+            if (rand < 0.40) return 3;      // 25% Good
+            if (rand < 0.75) return 4;      // 35% Near Mint
+            return 5;                       // 25% Mint
+        }
+
+        function conditionToText(condition) {
+            const conditions = {
+                1: 'Poor',
+                2: 'Played',
+                3: 'Good',
+                4: 'Near Mint',
+                5: 'Mint'
+            };
+            return conditions[condition] || 'Unknown';
+        }
+
         try {
             // Pick 3 cards
             const droppedCards = [];
@@ -100,10 +120,14 @@ module.exports = {
                 
                 // Update cards table - increment dropped count
                 await run('UPDATE cards SET dropped = dropped + 1 WHERE id = ?', [randomCard.id]);
+
+                // Condition is decided at drop time, before any grab
+                const condition = generateCondition();
                 
                 droppedCards.push({
                     card: randomCard,
-                    set: randomSet
+                    set: randomSet,
+                    condition
                 });
             }
 
@@ -126,7 +150,8 @@ module.exports = {
                 const cardImage = await cardGenFromCropped(
                     croppedImageBuffer,
                     { name: drop.card.name, subtitle: "", footer: `${printNumber}` },
-                    borderBuffer
+                    borderBuffer,
+                    drop.condition
                 );
                 
                 cardImages.push(cardImage);
@@ -207,251 +232,153 @@ module.exports = {
                 }
             });
 
-            // Set expiration timer (30 seconds)
-            setTimeout(() => {
-                const dropState = activeDrops.get(response.id);
-                if (dropState) {
-                    dropState.expired = true;
-                    
-                    // Remove buttons
-                    interaction.editReply({
-                        embeds: [embed],
-                        files: [attachment],
-                        components: []
-                    }).catch(console.error);
-                    
-                    // Clean up after 5 more seconds
-                    setTimeout(() => {
-                        activeDrops.delete(response.id);
-                    }, 5000);
-                }
-            }, 30000);
+            // ID sequence: 1-9, A-Z, then two-char: 11-19, 1A-1Z, 21-29, 2A-2Z, ...
+            // Each "digit" is one of: 1-9, A-Z (35 symbols total)
+            const ID_CHARS = '123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-            // Generate next sequential ID (for owned_cards)
+            function encodeId(n) {
+                // n is 0-based index; encode as base-35 with digits 1-9,A-Z
+                if (n < ID_CHARS.length) return ID_CHARS[n];
+                let result = '';
+                while (n >= 0) {
+                    result = ID_CHARS[n % ID_CHARS.length] + result;
+                    n = Math.floor(n / ID_CHARS.length) - 1;
+                }
+                return result;
+            }
+
+            function decodeId(str) {
+                let n = 0;
+                for (const ch of str) {
+                    n = n * ID_CHARS.length + ID_CHARS.indexOf(ch) + 1;
+                }
+                return n - 1;
+            }
+
             async function generateNextId() {
                 const lastCard = await get(
                     'SELECT id FROM owned_cards ORDER BY id DESC LIMIT 1'
                 );
-                
-                if (!lastCard || !lastCard.id) {
-                    return 'AAA-001';
-                }
-                
-                const parts = lastCard.id.split('-');
-                const prefix = parts[0];
-                let number = parseInt(parts[1]);
-                
-                number++;
-                
-                if (number > 999) {
-                    const nextPrefix = incrementPrefix(prefix);
-                    return `${nextPrefix}-001`;
-                }
-                
-                return `${prefix}-${number.toString().padStart(3, '0')}`;
+                if (!lastCard || !lastCard.id) return ID_CHARS[0]; // '1'
+                return encodeId(decodeId(lastCard.id) + 1);
             }
 
-            function incrementPrefix(prefix) {
-                const chars = prefix.split('');
-                let carry = true;
-                
-                for (let i = chars.length - 1; i >= 0 && carry; i--) {
-                    if (chars[i] === 'Z') {
-                        chars[i] = 'A';
-                    } else {
-                        chars[i] = String.fromCharCode(chars[i].charCodeAt(0) + 1);
-                        carry = false;
-                    }
-                }
-                
-                if (carry) {
-                    chars.unshift('A');
-                }
-                
-                return chars.join('');
-            }
+            // Button claim logic — use a message component collector to avoid
+            // stacking client.on listeners across multiple /drop calls
+            const collector = response.createMessageComponentCollector({ time: 30000 });
 
-            function generateCondition() {
-                const rand = Math.random();
-                if (rand < 0.05) return 1;      // 5% Poor
-                if (rand < 0.15) return 2;      // 10% Played
-                if (rand < 0.40) return 3;      // 25% Good
-                if (rand < 0.75) return 4;      // 35% Near Mint
-                return 5;                       // 25% Mint
-            }
+            collector.on('collect', async btnInteraction => {
+                if (!btnInteraction.customId.startsWith('claim_card_')) return;
 
-            function conditionToText(condition) {
-                const conditions = {
-                    1: 'Poor',
-                    2: 'Played',
-                    3: 'Good',
-                    4: 'Near Mint',
-                    5: 'Mint'
-                };
-                return conditions[condition] || 'Unknown';
-            }
-
-            // Button claim logic
-            client.on("interactionCreate", async interaction => {
-                if (!interaction.isButton()) return;
-                if (!interaction.customId.startsWith('claim_card_')) return;
-
-                const dropState = activeDrops.get(interaction.message.id);
+                const dropState = activeDrops.get(btnInteraction.message.id);
                 if (!dropState) return;
 
-                // Check if drop has expired
                 if (dropState.expired) {
-                    return interaction.reply({
-                        content: "❌ This drop has expired!",
-                        ephemeral: true
-                    });
+                    return btnInteraction.reply({ content: "❌ This drop has expired!", ephemeral: true });
                 }
 
-                // Get which card was selected (1, 2, or 3)
-                const cardIndex = parseInt(interaction.customId.split('_')[2]) - 1;
+                const cardIndex = parseInt(btnInteraction.customId.split('_')[2]) - 1;
                 const selectedDrop = dropState.cards[cardIndex];
 
                 if (!selectedDrop) {
-                    return interaction.reply({
-                        content: "❌ Invalid card selection.",
-                        ephemeral: true
-                    });
+                    return btnInteraction.reply({ content: "❌ Invalid card selection.", ephemeral: true });
                 }
 
-                // Check if this card has already been resolved
                 if (dropState.cardFights[cardIndex].resolved) {
-                    return interaction.reply({
-                        content: "❌ This card has already been claimed!",
-                        ephemeral: true
-                    });
+                    return btnInteraction.reply({ content: "❌ This card has already been claimed!", ephemeral: true });
                 }
 
-                const claimerUserId = interaction.user.id;
+                const claimerUserId = btnInteraction.user.id;
 
                 if (!(await userExists(claimerUserId))) {
-                    return interaction.reply({
-                        content: 'You are not registered!',
-                        ephemeral: true
-                    });
+                    return btnInteraction.reply({ content: 'You are not registered!', ephemeral: true });
                 }
 
-                // Check grab cooldown
+                const grabTime = Math.floor(Date.now() / 1000);
                 const lastGrab = await get('SELECT lastgrab FROM users WHERE userid = ?', [claimerUserId]);
-                const grabTime = Math.floor(Date.now() / 1000)
-                
+
                 if (lastGrab && lastGrab.lastgrab) {
-                    const timeDiffSeconds = (grabTime - lastGrab.lastgrab)
+                    const timeDiffSeconds = grabTime - lastGrab.lastgrab;
                     if (timeDiffSeconds < grabInterval) {
-                        const remainingTime = grabInterval - timeDiffSeconds;
-                        const seconds = Math.floor(remainingTime % 60);
-                        return interaction.reply({
+                        const seconds = Math.floor(grabInterval - timeDiffSeconds);
+                        return btnInteraction.reply({
                             content: `You can grab a card in ${seconds + 1} second(s)`,
                             ephemeral: true
                         });
                     }
                 }
 
-                // Add user to fighters list
                 const fightData = dropState.cardFights[cardIndex];
-                
-                // Check if user already tried to grab this card
+
                 if (fightData.fighters.includes(claimerUserId)) {
-                    return interaction.reply({
-                        content: "❌ You've already tried to grab this card!",
-                        ephemeral: true
-                    });
+                    return btnInteraction.reply({ content: "❌ You've already tried to grab this card!", ephemeral: true });
                 }
 
                 fightData.fighters.push(claimerUserId);
 
-                // Acknowledge the grab attempt
-                await interaction.reply({
-                    content: `⚔️ You're fighting for card ${cardIndex + 1}!`,
-                    ephemeral: true
-                });
+                await btnInteraction.reply({ content: `⚔️ You're fighting for card ${cardIndex + 1}!`, ephemeral: true });
 
-                // If this is the first fighter, start the 3 second timer
                 if (fightData.fighters.length === 1) {
                     setTimeout(async () => {
-                        // Resolve the fight
                         if (fightData.resolved) return;
                         fightData.resolved = true;
 
                         const fighters = fightData.fighters;
-                        let winner;
-
-                        // Dropper has priority
-                        if (fighters.includes(dropState.dropper)) {
-                            winner = dropState.dropper;
-                        } else {
-                            // Random winner among fighters
-                            winner = fighters[Math.floor(Math.random() * fighters.length)];
-                        }
+                        const winner = fighters.includes(dropState.dropper)
+                            ? dropState.dropper
+                            : fighters[Math.floor(Math.random() * fighters.length)];
 
                         try {
-                            const { card, set, printNumber } = selectedDrop;
-
-                            // Generate condition
-                            const condition = generateCondition();
+                            const { card, set, printNumber, condition } = selectedDrop;
                             const conditionText = conditionToText(condition);
-
-                            // Calculate toughness (number of fighters - 1)
                             const toughness = fighters.length - 1;
 
-                            // Update cards table - increment grabbed count
                             await run('UPDATE cards SET grabbed = grabbed + 1 WHERE id = ?', [card.id]);
-
-                            // Update winner's lastgrab
                             await run('UPDATE users SET lastgrab = ? WHERE userid = ?', [grabTime, winner]);
 
-                            // Generate next sequential ID for owned_cards
                             const uniqueId = await generateNextId();
 
-                            // Insert into owned_cards
                             await run(
                                 'INSERT INTO owned_cards (id, card, print, dropper, owner, grabber, `condition`, toughness) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                                 [uniqueId, card.id, printNumber, dropState.dropper, winner, winner, condition, toughness]
                             );
 
-                            // Get winner's username
                             const winnerUser = await client.users.fetch(winner);
 
-                            // Create success message
                             let successMessage = `🎉 **${winnerUser.username}** grabbed **${card.name}** (Print #${printNumber})!\n` +
-                                               `📦 Set: ${set.name}\n` +
-                                               `🏷️ Edition: ${card.edition}\n` +
-                                               `✨ Condition: ${conditionText}`;
+                                `📦 Set: ${set.name}\n` +
+                                `🏷️ Edition: ${card.edition}\n` +
+                                `✨ Condition: ${conditionText}`;
 
                             if (toughness > 0) {
                                 successMessage += `\n⚔️ Toughness: ${toughness} (fought against ${toughness} ${toughness === 1 ? 'person' : 'people'})`;
                             }
 
-                            // Send success message
-                            await interaction.message.channel.send({
-                                content: successMessage
-                            });
+                            await btnInteraction.message.channel.send({ content: successMessage });
 
                             console.log(`Card claimed: ${uniqueId} - ${card.name} by ${winnerUser.username} (toughness: ${toughness})`);
 
-                            // Check if all cards have been claimed
                             const allResolved = Object.values(dropState.cardFights).every(f => f.resolved);
                             if (allResolved) {
-                                activeDrops.delete(interaction.message.id);
-                                await interaction.message.edit({
-                                    embeds: [embed],
-                                    files: interaction.message.attachments.map(a => a),
-                                    components: []
-                                });
+                                collector.stop('all_claimed');
                             }
 
                         } catch (error) {
                             console.error('Error resolving fight:', error);
-                            await interaction.message.channel.send({
-                                content: '❌ An error occurred while resolving the fight.'
-                            });
+                            await btnInteraction.message.channel.send({ content: '❌ An error occurred while resolving the fight.' });
                         }
                     }, 5000);
                 }
+            });
+
+            collector.on('end', async (_, reason) => {
+                const dropState = activeDrops.get(response.id);
+                if (dropState) {
+                    dropState.expired = true;
+                    activeDrops.delete(response.id);
+                }
+                // Remove buttons when collector ends (expired or all claimed)
+                await response.edit({ components: [] }).catch(console.error);
             });
 
         } catch (error) {
