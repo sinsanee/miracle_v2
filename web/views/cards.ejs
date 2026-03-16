@@ -681,6 +681,7 @@
                 </button>
                 <button class="btn btn-primary" onclick="openBulkModal()">+ Bulk Add Cards</button>
                 <button class="btn btn-primary" onclick="openCreateModal()">+ Add New Card</button>
+                <button class="btn" style="border-color: var(--accent); color: var(--accent);" onclick="openRegenerateModal()">🔁 Regenerate Set</button>
             </div>
         </div>
 
@@ -998,6 +999,34 @@
         </div>
     </div>
 
+    <!-- Regenerate Set Modal -->
+    <div id="regenerate-modal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <button class="close-modal" onclick="closeModal('regenerate-modal')">&times;</button>
+            <h3 class="modal-header">Regenerate Set Cards</h3>
+
+            <p style="color: rgba(255,255,255,0.7); margin-bottom: 24px; line-height: 1.6;">
+                This will re-apply the set's current border to all cards in the selected set, using each card's stored raw image. Use this after changing a set's border image.
+            </p>
+
+            <div class="form-group">
+                <label for="regen-set-select">Select Set</label>
+                <select id="regen-set-select">
+                    <% sets.forEach(function(set) { %>
+                        <option value="<%= set.id %>"><%= set.name %></option>
+                    <% }); %>
+                </select>
+            </div>
+
+            <div id="regen-status" style="display:none; margin-top: 16px; padding: 14px; border-radius: 10px; font-size: 0.95rem; line-height: 1.6;"></div>
+
+            <div class="form-actions" id="regen-actions">
+                <button type="button" class="btn" onclick="closeModal('regenerate-modal')">Cancel</button>
+                <button type="button" class="btn" style="border-color: var(--accent); color: var(--accent);" onclick="confirmRegenerate()" id="regen-confirm-btn">🔁 Regenerate</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global variables
         var isEditMode = false;
@@ -1056,6 +1085,9 @@
         }
 
         // Image handling and preview functions
+        // Track the card ID being edited so preview-existing can use it
+        var currentEditCardId = null;
+
         function handleImageChange() {
             updatePreview();
         }
@@ -1077,8 +1109,38 @@
             var cropMode = document.getElementById('crop-mode').value;
             var imageFile = document.getElementById('card-image').files[0];
             var imageUrl = document.getElementById('image-url').value;
+            var isRealUrl = imageUrl && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'));
 
-            if (!imageFile && !imageUrl) {
+            // In edit mode with no new image — use existing raw image on server
+            if (isEditMode && !imageFile && !isRealUrl && currentEditCardId) {
+                document.getElementById('preview-container').style.display = 'block';
+                document.getElementById('preview-loading').style.display = 'block';
+                document.getElementById('preview-image').style.display = 'none';
+
+                fetch('/admin/cards/' + currentEditCardId + '/preview-existing', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cropMode: cropMode, setId: setId, name: cardName })
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        var previewImg = document.getElementById('preview-image');
+                        previewImg.src = data.preview;
+                        previewImg.style.display = 'block';
+                    } else {
+                        showMessage('Failed to generate preview: ' + (data.error || 'Unknown error'), true);
+                    }
+                    document.getElementById('preview-loading').style.display = 'none';
+                })
+                .catch(function() {
+                    document.getElementById('preview-loading').style.display = 'none';
+                    showMessage('Preview generation error', true);
+                });
+                return;
+            }
+
+            if (!imageFile && !isRealUrl) {
                 document.getElementById('preview-container').style.display = 'none';
                 return;
             }
@@ -1451,6 +1513,7 @@
 
         function openCreateModal() {
             isEditMode = false;
+            currentEditCardId = null;
             document.getElementById('modal-title').textContent = 'Add New Card';
             document.getElementById('card-form').reset();
             document.getElementById('card-id').value = '';
@@ -1461,8 +1524,16 @@
 
         function openEditModal(cardId) {
             isEditMode = true;
+            currentEditCardId = cardId;
             document.getElementById('modal-title').textContent = 'Edit Card';
             
+            // Reset preview
+            document.getElementById('preview-container').style.display = 'none';
+            document.getElementById('preview-image').style.display = 'none';
+            document.getElementById('preview-image').src = '';
+            document.getElementById('card-image').value = '';
+            document.getElementById('image-url').value = '';
+
             fetch('/admin/cards/' + cardId)
                 .then(function(response) { return response.json(); })
                 .then(function(card) {
@@ -1470,7 +1541,6 @@
                     document.getElementById('card-name').value = card.name;
                     document.getElementById('edition-input').value = card.edition;
                     document.getElementById('set-select').value = card.set_id;
-                    document.getElementById('image-url').value = card.image || '';
                     
                     if (card.dropping === 1) {
                         document.getElementById('dropping-yes').checked = true;
@@ -1482,6 +1552,16 @@
                         var date = new Date(card.scheduled_drop);
                         var localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
                         document.getElementById('scheduled-drop').value = localDate.toISOString().slice(0, 16);
+                    } else {
+                        document.getElementById('scheduled-drop').value = '';
+                    }
+
+                    // Show existing bordered image as preview
+                    if (card.bordered_image) {
+                        var previewImg = document.getElementById('preview-image');
+                        previewImg.src = '/cards/images/' + card.bordered_image;
+                        previewImg.style.display = 'block';
+                        document.getElementById('preview-container').style.display = 'block';
                     }
                     
                     toggleSchedule();
@@ -1583,9 +1663,26 @@
                 formData.append('imageUrl', imageUrl);
             }
             
-            // In edit mode without new image, skip preview and submit directly
+            // In edit mode without new image, submit to /update (which regenerates the card)
             if (isEditMode && !imageFile && !imageUrl) {
-                submitCardWithoutPreview(formData);
+                showMessage('Saving card...', false);
+                fetch('/admin/cards/' + cardId + '/update', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(function(response) { return response.json(); })
+                .then(function(result) {
+                    if (result.success) {
+                        showMessage(result.message);
+                        closeModal('card-modal');
+                        setTimeout(function() { location.reload(); }, 1000);
+                    } else {
+                        showMessage(result.error || 'Operation failed', true);
+                    }
+                })
+                .catch(function() {
+                    showMessage('An error occurred. Please try again.', true);
+                });
                 return;
             }
             
@@ -1838,6 +1935,75 @@
             .catch(err => {
                 console.error('Bulk delete error:', err);
                 showMessage('Failed to delete cards', true);
+            });
+        }
+
+        // Regenerate set
+        function openRegenerateModal() {
+            document.getElementById('regen-status').style.display = 'none';
+            document.getElementById('regen-actions').style.display = 'flex';
+            document.getElementById('regen-confirm-btn').disabled = false;
+            document.getElementById('regen-confirm-btn').textContent = '🔁 Regenerate';
+            closeModal('regenerate-modal');
+            document.getElementById('regenerate-modal').classList.add('show');
+        }
+
+        function confirmRegenerate() {
+            var setId = document.getElementById('regen-set-select').value;
+            var setName = document.getElementById('regen-set-select').options[document.getElementById('regen-set-select').selectedIndex].text;
+
+            if (!confirm('Regenerate all cards in set "' + setName + '"? This will overwrite their bordered images using the set\'s current border.')) return;
+
+            var btn = document.getElementById('regen-confirm-btn');
+            var status = document.getElementById('regen-status');
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Regenerating...';
+            status.style.display = 'block';
+            status.style.background = 'rgba(0, 245, 255, 0.1)';
+            status.style.border = '1px solid rgba(0, 245, 255, 0.3)';
+            status.style.color = 'var(--accent)';
+            status.textContent = 'Regenerating cards, please wait...';
+
+            fetch('/admin/cards/regenerate-set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ set_id: setId })
+            })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    status.style.background = 'rgba(0, 255, 136, 0.1)';
+                    status.style.border = '1px solid var(--success)';
+                    status.style.color = 'var(--success)';
+                    var msg = '✅ ' + data.message;
+                    if (data.errors && data.errors.length > 0) {
+                        msg += '\n\n⚠️ Some cards failed:\n' + data.errors.join('\n');
+                        status.style.background = 'rgba(255, 170, 0, 0.1)';
+                        status.style.border = '1px solid var(--warning)';
+                        status.style.color = 'var(--warning)';
+                    }
+                    status.style.whiteSpace = 'pre-wrap';
+                    status.textContent = msg;
+                    btn.textContent = '✅ Done';
+                    document.getElementById('regen-actions').innerHTML =
+                        '<button type="button" class="btn btn-primary" onclick="closeModal(\'regenerate-modal\'); location.reload();">Close & Refresh</button>';
+                } else {
+                    status.style.background = 'rgba(255, 0, 110, 0.1)';
+                    status.style.border = '1px solid var(--primary)';
+                    status.style.color = 'var(--primary)';
+                    status.textContent = '❌ ' + (data.error || 'Regeneration failed');
+                    btn.disabled = false;
+                    btn.textContent = '🔁 Retry';
+                }
+            })
+            .catch(function() {
+                status.style.background = 'rgba(255, 0, 110, 0.1)';
+                status.style.border = '1px solid var(--primary)';
+                status.style.color = 'var(--primary)';
+                status.textContent = '❌ An error occurred. Please try again.';
+                btn.disabled = false;
+                btn.textContent = '🔁 Retry';
             });
         }
 

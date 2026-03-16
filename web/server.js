@@ -7,7 +7,7 @@ require('./models/font'); // ← Make sure this is here!
 const multer = require('multer');
 const fs = require('fs').promises;
 const sharp = require('sharp');
-const { cardGen } = require('./models/cardGen');
+const { cardGen, cardGenFromCropped } = require('./models/cardGen');
 const { resolveImageBuffer } = require('./models/imageResolver');
 const { cropImage } = require('./models/imageCrop');
 const { generateUniqueId } = require('./models/generateId');
@@ -291,7 +291,7 @@ app.post('/admin/cards/preview', isAdmin, upload.single('image'), async (req, re
     // Get image buffer from upload or URL
     if (req.file) {
       imageBuffer = await fs.readFile(req.file.path);
-    } else if (imageUrl) {
+    } else if (imageUrl && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
       imageBuffer = await resolveImageBuffer(imageUrl);
     } else {
       return res.status(400).json({ error: 'No image provided' });
@@ -303,7 +303,7 @@ app.post('/admin/cards/preview', isAdmin, upload.single('image'), async (req, re
       const setData = await queryOne('SELECT border FROM sets WHERE id = ?', [setId]);
       if (setData && setData.border) {
         // FIXED: Use correct path relative to server.js location
-        borderPath = path.join(__dirname, 'public/uploads/borders', setData.border);
+        borderPath = path.join(__dirname, 'img/borders', setData.border);
       }
     }
     
@@ -378,7 +378,7 @@ app.post('/admin/cards/create-with-image', isAdmin, upload.single('image'), asyn
 
     let borderPath;
     if (setData.border) {
-      borderPath = path.join(__dirname, 'public/uploads/borders', setData.border);
+      borderPath = path.join(__dirname, 'img/borders', setData.border);
     } else {
       borderPath = path.join(__dirname, 'assets', 'border.png');
     }
@@ -443,7 +443,7 @@ app.post('/admin/cards/bulk-create', isAdmin, upload.array('images', 50), async 
 
     let borderPath;
     if (setData.border) {
-      borderPath = path.join(__dirname, 'public/uploads/borders', setData.border);
+      borderPath = path.join(__dirname, 'img/borders', setData.border);
     } else {
       borderPath = path.join(__dirname, 'assets', 'border.png');
     }
@@ -458,27 +458,27 @@ app.post('/admin/cards/bulk-create', isAdmin, upload.array('images', 50), async 
 
       // Get image from file upload or URL
       if (req.files[i] && req.files[i].size > 0) {
-        // File was uploaded
         const file = req.files[i];
         imageBuffer = await fs.readFile(file.path);
-        
-        // Save raw image
-        rawImageFilename = `raw_${Date.now()}_${i}_${file.originalname}`;
-        const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
-        await fs.copyFile(file.path, rawImagePath);
-        
         await fs.unlink(file.path).catch(() => {}); // Clean up temp file
       } else if (urls[i]) {
-        // URL was provided
         imageBuffer = await resolveImageBuffer(urls[i]);
-        
-        // Save raw image from URL
-        rawImageFilename = `raw_${Date.now()}_${i}_url.png`;
-        const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
-        await fs.writeFile(rawImagePath, imageBuffer);
       } else {
         continue; // Skip if no image
       }
+
+      // Save resized (cropped) raw image at card dimensions
+      const resizedRawBuffer = await sharp(imageBuffer)
+        .resize(550, 600, {
+          fit: cropMode === 'stretch' ? 'fill' : 'cover',
+          position: cropMode === 'stretch' ? undefined : cropMode
+        })
+        .png()
+        .toBuffer();
+
+      rawImageFilename = `raw_${Date.now()}_${i}.png`;
+      const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
+      await fs.writeFile(rawImagePath, resizedRawBuffer);
 
       const cardBuffer = await cardGen(imageBuffer, {
         name: card.name,
@@ -502,6 +502,36 @@ app.post('/admin/cards/bulk-create', isAdmin, upload.array('images', 50), async 
   } catch (error) {
     console.error('Bulk creation error:', error);
     res.status(500).json({ error: 'Failed to create cards: ' + error.message });
+  }
+});
+
+app.post('/admin/cards/:id/preview-existing', isAdmin, async (req, res) => {
+  try {
+    const { cropMode, setId, name } = req.body;
+    const card = await queryOne('SELECT * FROM cards WHERE id = ?', [req.params.id]);
+    if (!card || !card.image) return res.status(404).json({ error: 'Card or image not found' });
+
+    const rawImagePath = path.join(__dirname, 'public/uploads/cards', card.image);
+    const rawImageBuffer = await fs.readFile(rawImagePath);
+
+    let borderPath;
+    if (setId) {
+      const setData = await queryOne('SELECT border FROM sets WHERE id = ?', [setId]);
+      if (setData && setData.border) borderPath = path.join(__dirname, 'img/borders', setData.border);
+    }
+    if (!borderPath) borderPath = path.join(__dirname, 'assets', 'border.png');
+    const border = await fs.readFile(borderPath);
+
+    const cardBuffer = await cardGen(rawImageBuffer, {
+      name: name || card.name,
+      subtitle: '',
+      footer: ''
+    }, cropMode || 'centre', border);
+
+    res.json({ success: true, preview: `data:image/png;base64,${cardBuffer.toString('base64')}` });
+  } catch (error) {
+    console.error('Preview existing error:', error);
+    res.status(500).json({ error: 'Failed to generate preview: ' + error.message });
   }
 });
 
@@ -538,52 +568,72 @@ app.post('/admin/cards/:id/update', isAdmin, upload.single('image'), async (req,
     let newImageFilename = existingCard.image;
     let newBorderedFilename = existingCard.bordered_image;
     
-    // Check if new image was provided
-    if (req.file || imageUrl) {
+    // Only treat imageUrl as a real URL (not a stored filename)
+    const isRealUrl = imageUrl && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'));
+
+    // Get border for the (possibly changed) set
+    const setData = await queryOne('SELECT name, border FROM sets WHERE id = ?', [finalSetId]);
+    let borderPath;
+    if (setData && setData.border) {
+      borderPath = path.join(__dirname, 'img/borders', setData.border);
+    } else {
+      borderPath = path.join(__dirname, 'assets', 'border.png');
+    }
+    const border = await fs.readFile(borderPath);
+
+    if (req.file || isRealUrl) {
+      // New image provided — resize and save as new raw, then generate bordered
       let imageBuffer;
       
       if (req.file) {
         imageBuffer = await fs.readFile(req.file.path);
-        
-        // Save raw image
-        const rawImageFilename = `raw_${Date.now()}_${req.file.originalname}`;
-        const rawImagePath = path.join(__dirname, 'public/uploads/cards', rawImageFilename);
-        await fs.copyFile(req.file.path, rawImagePath);
-        newImageFilename = rawImageFilename;
-        
-      } else if (imageUrl) {
-        imageBuffer = await resolveImageBuffer(imageUrl);
-        newImageFilename = imageUrl;
-      }
-      
-      // Generate new bordered card
-      const setData = await queryOne('SELECT name, border FROM sets WHERE id = ?', [finalSetId]);
-      
-      let borderPath;
-      if (setData && setData.border) {
-        borderPath = path.join(__dirname, 'public/uploads/borders', setData.border);
-      } else {
-        borderPath = path.join(__dirname, 'assets', 'border.png');
-      }
-      
-      const border = await fs.readFile(borderPath);
-      
-      const cardBuffer = await cardGen(imageBuffer, {
-        name: name,
-        subtitle: ``,
-        footer: ''
-      }, cropMode || 'centre', border);
-      
-      const cardFilename = `${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${edition}_${Date.now()}.png`;
-      const cardPath = path.join(__dirname, 'public/uploads/cards', cardFilename);
-      await fs.writeFile(cardPath, cardBuffer);
-      
-      newBorderedFilename = cardFilename;
-      
-      // Clean up temp file
-      if (req.file) {
         await fs.unlink(req.file.path).catch(() => {});
+      } else {
+        imageBuffer = await resolveImageBuffer(imageUrl);
       }
+
+      // Save resized raw image at card dimensions
+      const resizedRawBuffer = await sharp(imageBuffer)
+        .resize(550, 600, {
+          fit: (cropMode || 'centre') === 'stretch' ? 'fill' : 'cover',
+          position: (cropMode || 'centre') === 'stretch' ? undefined : (cropMode || 'centre')
+        })
+        .png()
+        .toBuffer();
+
+      const rawImageFilename = `raw_${Date.now()}.png`;
+      await fs.writeFile(path.join(__dirname, 'public/uploads/cards', rawImageFilename), resizedRawBuffer);
+      newImageFilename = rawImageFilename;
+
+      // Generate bordered card from original (full-res) buffer
+      const cardBuffer = await cardGen(imageBuffer, { name, subtitle: '', footer: '' }, cropMode || 'centre', border);
+      const cardFilename = `bordered_${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${edition}_${Date.now()}.png`;
+      await fs.writeFile(path.join(__dirname, 'public/uploads/cards', cardFilename), cardBuffer);
+      newBorderedFilename = cardFilename;
+
+    } else if (existingCard.image) {
+      // No new image — but re-generate bordered image in case name, crop mode, or set changed
+      const existingRawPath = path.join(__dirname, 'public/uploads/cards', existingCard.image);
+      const existingRawBuffer = await fs.readFile(existingRawPath);
+
+      // Re-crop the raw image with the (possibly new) crop mode and save
+      const resizedRawBuffer = await sharp(existingRawBuffer)
+        .resize(550, 600, {
+          fit: (cropMode || 'centre') === 'stretch' ? 'fill' : 'cover',
+          position: (cropMode || 'centre') === 'stretch' ? undefined : (cropMode || 'centre')
+        })
+        .png()
+        .toBuffer();
+
+      const rawImageFilename = `raw_${Date.now()}.png`;
+      await fs.writeFile(path.join(__dirname, 'public/uploads/cards', rawImageFilename), resizedRawBuffer);
+      newImageFilename = rawImageFilename;
+
+      // Re-generate the bordered card from the re-cropped raw
+      const cardBuffer = await cardGenFromCropped(resizedRawBuffer, { name, subtitle: '', footer: '' }, border);
+      const cardFilename = `bordered_${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${edition}_${Date.now()}.png`;
+      await fs.writeFile(path.join(__dirname, 'public/uploads/cards', cardFilename), cardBuffer);
+      newBorderedFilename = cardFilename;
     }
     
     // Update card
@@ -1214,6 +1264,73 @@ app.post('/admin/sets/:id/delete', isAdmin, async (req, res) => {
 
 // Serve border images from img/borders
 app.use('/img/borders', express.static(path.join(__dirname, 'img/borders')));
+
+// Regenerate all bordered images for a set
+app.post('/admin/cards/regenerate-set', isAdmin, async (req, res) => {
+  const { set_id } = req.body;
+
+  try {
+    const setData = await queryOne('SELECT * FROM sets WHERE id = ?', [set_id]);
+    if (!setData) return res.status(404).json({ error: 'Set not found' });
+
+    const borderPath = setData.border
+      ? path.join(__dirname, 'img/borders', setData.border)
+      : path.join(__dirname, 'assets', 'border.png');
+
+    const border = await fs.readFile(borderPath);
+
+    const cards = await query(
+      'SELECT * FROM cards WHERE set_id = ? AND image IS NOT NULL',
+      [set_id]
+    );
+
+    if (cards.length === 0) {
+      return res.json({ success: true, message: 'No cards with images found in this set.', regenerated: 0 });
+    }
+
+    let regenerated = 0;
+    const errors = [];
+
+    for (const card of cards) {
+      try {
+        const rawImagePath = path.join(__dirname, 'public/uploads/cards', card.image);
+        const rawImageBuffer = await fs.readFile(rawImagePath);
+
+        const borderedCardBuffer = await cardGenFromCropped(rawImageBuffer, {
+          name: card.name,
+          subtitle: '',
+          footer: ''
+        }, border);
+
+        // Overwrite the existing bordered image, or create a new filename
+        let borderedFilename = card.bordered_image;
+        if (!borderedFilename) {
+          borderedFilename = `bordered_${card.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${card.edition}_${Date.now()}.png`;
+        }
+
+        const borderedPath = path.join(__dirname, 'public/uploads/cards', borderedFilename);
+        await fs.writeFile(borderedPath, borderedCardBuffer);
+
+        await query('UPDATE cards SET bordered_image = ? WHERE id = ?', [borderedFilename, card.id]);
+        regenerated++;
+      } catch (cardError) {
+        console.error(`Failed to regenerate card ${card.id}:`, cardError.message);
+        errors.push(`Card "${card.name}" (ID ${card.id}): ${cardError.message}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Regenerated ${regenerated} of ${cards.length} cards in set "${setData.name}".`,
+      regenerated,
+      total: cards.length,
+      errors
+    });
+  } catch (error) {
+    console.error('Regenerate set error:', error);
+    res.status(500).json({ error: 'Failed to regenerate cards: ' + error.message });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
