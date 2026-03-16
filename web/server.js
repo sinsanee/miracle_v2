@@ -908,6 +908,25 @@ app.get('/admin/inventory', isAdmin, async (req, res) => {
   }
 });
 
+app.post('/admin/inventory/create', isAdmin, async (req, res) => {
+  const { userid, itemid, amount } = req.body;
+  
+  try {
+    const existing = await queryOne('SELECT * FROM inventory WHERE userid = ? AND itemid = ?', [userid, itemid]);
+    
+    if (existing) {
+      await query('UPDATE inventory SET amount = ? WHERE userid = ? AND itemid = ?', [amount, userid, itemid]);
+    } else {
+      await query('INSERT INTO inventory (userid, itemid, amount) VALUES (?, ?, ?)', [userid, itemid, amount]);
+    }
+    
+    res.json({ success: true, message: 'Inventory item added successfully' });
+  } catch (error) {
+    console.error('Inventory create error:', error);
+    res.status(500).json({ error: 'Failed to add inventory item: ' + error.message });
+  }
+});
+
 app.post('/admin/inventory/update', isAdmin, async (req, res) => {
   const { userid, itemid, amount } = req.body;
   
@@ -922,7 +941,8 @@ app.post('/admin/inventory/update', isAdmin, async (req, res) => {
     
     res.json({ success: true, message: 'Inventory updated successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update inventory' });
+    console.error('Inventory update error:', error);
+    res.status(500).json({ error: 'Failed to update inventory: ' + error.message });
   }
 });
 
