@@ -392,8 +392,10 @@
             <thead>
                 <tr>
                     <th>ID</th>
+                    <th>Image</th>
                     <th>Name</th>
                     <th>Description</th>
+                    <th>Shop Price</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -403,10 +405,18 @@
                     data-id="<%= item.id %>"
                     data-name="<%= (item.name || '').toLowerCase() %>">
                     <td><%= item.id %></td>
+                    <td>
+                        <% if (item.image) { %>
+                            <img src="/items/images/<%= item.image %>" alt="<%= item.name %>" style="width: 48px; height: 48px; object-fit: contain; border-radius: 6px; background: rgba(0,0,0,0.3);">
+                        <% } else { %>
+                            <span style="color: rgba(255,255,255,0.3);">—</span>
+                        <% } %>
+                    </td>
                     <td><strong><%= item.name %></strong></td>
                     <td><%= item.description || '-' %></td>
+                    <td><%= item.shopprice != null ? item.shopprice : '-' %></td>
                     <td>
-                        <button class="btn btn-small" onclick='editItem(<%= item.id %>, "<%= item.name.replace(/"/g, "&quot;") %>", "<%= (item.description || "").replace(/"/g, "&quot;") %>")'>Edit</button>
+                        <button class="btn btn-small" onclick='editItem(<%= item.id %>, "<%= item.name.replace(/"/g, "&quot;") %>", "<%= (item.description || "").replace(/"/g, "&quot;") %>", "<%= item.image || "" %>", "<%= item.shopprice != null ? item.shopprice : "" %>")'>Edit</button>
                         <button class="btn btn-small btn-danger" onclick='deleteItem(<%= item.id %>)'>Delete</button>
                     </td>
                 </tr>
@@ -422,7 +432,7 @@
                 <h3>Create Item</h3>
                 <button class="close-btn" onclick="closeModal('create-modal')">&times;</button>
             </div>
-            <form onsubmit="handleCreate(event)">
+            <form id="create-form" onsubmit="handleCreate(event)">
                 <div class="form-group">
                     <label>Name *</label>
                     <input type="text" id="create-name" required>
@@ -430,6 +440,14 @@
                 <div class="form-group">
                     <label>Description</label>
                     <textarea id="create-description" placeholder="Optional"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Shop Price (optional)</label>
+                    <input type="number" id="create-shopprice" placeholder="Optional" min="0" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Image (optional)</label>
+                    <input type="file" id="create-image" accept="image/*">
                 </div>
                 <button type="submit" class="btn btn-primary">Create</button>
             </form>
@@ -443,7 +461,7 @@
                 <h3>Edit Item</h3>
                 <button class="close-btn" onclick="closeModal('edit-modal')">&times;</button>
             </div>
-            <form onsubmit="handleUpdate(event)">
+            <form id="edit-form" onsubmit="handleUpdate(event)">
                 <input type="hidden" id="edit-id">
                 <div class="form-group">
                     <label>Name *</label>
@@ -452,6 +470,18 @@
                 <div class="form-group">
                     <label>Description</label>
                     <textarea id="edit-description" placeholder="Optional"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Shop Price (optional)</label>
+                    <input type="number" id="edit-shopprice" placeholder="Optional" min="0" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Replace Image (optional)</label>
+                    <div id="edit-current-image" style="margin-bottom: 8px; display: none;">
+                        <img id="edit-image-preview" src="" style="height: 60px; object-fit: contain; border-radius: 6px; background: rgba(0,0,0,0.3); margin-bottom: 4px; display: block;">
+                        <small style="color: rgba(255,255,255,0.5);">Current image — upload a new one to replace</small>
+                    </div>
+                    <input type="file" id="edit-image" accept="image/*">
                 </div>
                 <button type="submit" class="btn btn-primary">Update</button>
             </form>
@@ -479,15 +509,16 @@
         function handleCreate(event) {
             event.preventDefault();
             
-            var formData = {
-                name: document.getElementById('create-name').value,
-                description: document.getElementById('create-description').value
-            };
+            var formData = new FormData();
+            formData.append('name', document.getElementById('create-name').value);
+            formData.append('description', document.getElementById('create-description').value);
+            formData.append('shopprice', document.getElementById('create-shopprice').value || '');
+            var imageFile = document.getElementById('create-image').files[0];
+            if (imageFile) formData.append('image', imageFile);
 
             fetch('/admin/items/create', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(formData)
+                body: formData
             })
             .then(function(response) { return response.json(); })
             .then(function(result) {
@@ -504,10 +535,22 @@
             });
         }
 
-        function editItem(id, name, description) {
+        function editItem(id, name, description, image, shopprice) {
             document.getElementById('edit-id').value = id;
             document.getElementById('edit-name').value = name;
             document.getElementById('edit-description').value = description;
+            document.getElementById('edit-shopprice').value = shopprice || '';
+            document.getElementById('edit-image').value = '';
+
+            var currentImageDiv = document.getElementById('edit-current-image');
+            var previewImg = document.getElementById('edit-image-preview');
+            if (image) {
+                previewImg.src = '/items/images/' + image;
+                currentImageDiv.style.display = 'block';
+            } else {
+                currentImageDiv.style.display = 'none';
+            }
+
             openModal('edit-modal');
         }
 
@@ -515,15 +558,16 @@
             event.preventDefault();
             
             var id = document.getElementById('edit-id').value;
-            var formData = {
-                name: document.getElementById('edit-name').value,
-                description: document.getElementById('edit-description').value
-            };
+            var formData = new FormData();
+            formData.append('name', document.getElementById('edit-name').value);
+            formData.append('description', document.getElementById('edit-description').value);
+            formData.append('shopprice', document.getElementById('edit-shopprice').value || '');
+            var imageFile = document.getElementById('edit-image').files[0];
+            if (imageFile) formData.append('image', imageFile);
 
             fetch('/admin/items/' + id + '/update', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(formData)
+                body: formData
             })
             .then(function(response) { return response.json(); })
             .then(function(result) {

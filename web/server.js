@@ -805,39 +805,70 @@ app.post('/admin/owned-cards/:id/delete', isAdmin, async (req, res) => {
 });
 
 // Items Management
+// Item image upload storage
+const itemStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, 'public/uploads/items'));
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname.replace(/[^a-z0-9._-]/gi, '_'));
+  }
+});
+const itemUpload = multer({
+  storage: itemStorage,
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  }
+});
+
+app.use('/items/images', express.static(path.join(__dirname, 'public/uploads/items')));
+
 app.get('/admin/items', isAdmin, async (req, res) => {
   try {
     const items = await query('SELECT * FROM items ORDER BY id DESC');
-    
-    res.render('items', {
-      username: req.session.username,
-      items: items
-    });
+    res.render('items', { username: req.session.username, items: items });
   } catch (error) {
     console.error('Items page error:', error);
     res.status(500).send('Error loading items page');
   }
 });
 
-app.post('/admin/items/create', isAdmin, async (req, res) => {
-  const { name, description } = req.body;
-  
+app.post('/admin/items/create', isAdmin, itemUpload.single('image'), async (req, res) => {
+  const { name, description, shopprice } = req.body;
+  const imageFilename = req.file ? req.file.filename : null;
+  const price = shopprice !== '' && shopprice != null ? parseInt(shopprice) : null;
   try {
-    await query('INSERT INTO items (name, description) VALUES (?, ?)', [name, description || null]);
+    await query('INSERT INTO items (name, description, image, shopprice) VALUES (?, ?, ?, ?)', [name, description || null, imageFilename, price]);
     res.json({ success: true, message: 'Item created successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create item' });
+    console.error('Item create error:', error);
+    // Fallback without image/shopprice columns in case they don't exist yet
+    try {
+      await query('INSERT INTO items (name, description) VALUES (?, ?)', [name, description || null]);
+      res.json({ success: true, message: 'Item created successfully (no image/shopprice column)' });
+    } catch (err2) {
+      console.error('Item create fallback error:', err2);
+      res.status(500).json({ error: 'Failed to create item: ' + err2.message });
+    }
   }
 });
 
-app.post('/admin/items/:id/update', isAdmin, async (req, res) => {
-  const { name, description } = req.body;
-  
+app.post('/admin/items/:id/update', isAdmin, itemUpload.single('image'), async (req, res) => {
+  const { name, description, shopprice } = req.body;
+  const imageFilename = req.file ? req.file.filename : null;
+  const price = shopprice !== '' && shopprice != null ? parseInt(shopprice) : null;
   try {
-    await query('UPDATE items SET name = ?, description = ? WHERE id = ?', [name, description || null, req.params.id]);
+    if (imageFilename) {
+      await query('UPDATE items SET name = ?, description = ?, image = ?, shopprice = ? WHERE id = ?', [name, description || null, imageFilename, price, req.params.id]);
+    } else {
+      await query('UPDATE items SET name = ?, description = ?, shopprice = ? WHERE id = ?', [name, description || null, price, req.params.id]);
+    }
     res.json({ success: true, message: 'Item updated successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update item' });
+    console.error('Item update error:', error);
+    res.status(500).json({ error: 'Failed to update item: ' + error.message });
   }
 });
 
@@ -846,7 +877,8 @@ app.post('/admin/items/:id/delete', isAdmin, async (req, res) => {
     await query('DELETE FROM items WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Item deleted successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to delete item' });
+    console.error('Item delete error:', error);
+    res.status(500).json({ error: 'Failed to delete item: ' + error.message });
   }
 });
 
