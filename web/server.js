@@ -272,9 +272,9 @@ app.post('/admin/cards/create', isAdmin, async (req, res) => {
     }
     
     await query(`
-      INSERT INTO cards (name, edition, set_id, image, dropping, scheduled_drop) 
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [name, edition, finalSetId, image || null, dropping, scheduled_drop || null]);
+      INSERT INTO cards (name, edition, set_id, image, dropping, scheduled_drop, added) 
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [name, edition, finalSetId, image || null, dropping, scheduled_drop || null, image ? 1 : 0]);
     
     res.json({ success: true, message: 'Card created successfully' });
   } catch (error) {
@@ -354,6 +354,22 @@ app.post('/admin/cards/preview', isAdmin, upload.single('image'), async (req, re
 });
 
 
+// Create an unadded card (placeholder - no image)
+app.post('/admin/cards/create-unadded', isAdmin, async (req, res) => {
+  const { name, edition, set_id } = req.body;
+  try {
+    let finalSetId = set_id || null;
+    await query(
+      'INSERT INTO cards (name, edition, set_id, dropping, added) VALUES (?, ?, ?, 0, 0)',
+      [name, edition || 1, finalSetId]
+    );
+    res.json({ success: true, message: `Unadded card "${name}" created` });
+  } catch (error) {
+    console.error('Create unadded card error:', error);
+    res.status(500).json({ error: 'Failed to create unadded card: ' + error.message });
+  }
+});
+
 app.post('/admin/cards/create-with-image', isAdmin, upload.single('image'), async (req, res) => {
   try {
     const { name, edition, set_id, set_name, imageUrl, cropMode, dropping, scheduled_drop } = req.body;
@@ -410,8 +426,8 @@ app.post('/admin/cards/create-with-image', isAdmin, upload.single('image'), asyn
     await fs.writeFile(borderedPath, borderedCardBuffer);
 
     await query(`
-      INSERT INTO cards (name, edition, set_id, image, bordered_image, dropping, scheduled_drop) 
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cards (name, edition, set_id, image, bordered_image, dropping, scheduled_drop, added) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     `, [name, edition, finalSetId, croppedFilename, borderedFilename, dropping, scheduled_drop || null]);
 
     if (req.file) {
@@ -491,8 +507,8 @@ app.post('/admin/cards/bulk-create', isAdmin, upload.array('images', 50), async 
       await fs.writeFile(cardPath, cardBuffer);
 
       await query(`
-        INSERT INTO cards (name, edition, set_id, image, bordered_image, dropping, scheduled_drop) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cards (name, edition, set_id, image, bordered_image, dropping, scheduled_drop, added) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
       `, [card.name, card.edition, finalSetId, rawImageFilename, cardFilename, dropping, scheduled_drop || null]);
 
       created++;
@@ -636,12 +652,13 @@ app.post('/admin/cards/:id/update', isAdmin, upload.single('image'), async (req,
       newBorderedFilename = cardFilename;
     }
     
-    // Update card
+    // Update card — set added=1 if it now has a bordered image
+    const isNowAdded = newBorderedFilename ? 1 : existingCard.added;
     await query(`
       UPDATE cards 
-      SET name = ?, edition = ?, set_id = ?, image = ?, bordered_image = ?, dropping = ?, scheduled_drop = ? 
+      SET name = ?, edition = ?, set_id = ?, image = ?, bordered_image = ?, dropping = ?, scheduled_drop = ?, added = ?
       WHERE id = ?
-    `, [name, edition, finalSetId, newImageFilename, newBorderedFilename, dropping, scheduled_drop || null, cardId]);
+    `, [name, edition, finalSetId, newImageFilename, newBorderedFilename, dropping, scheduled_drop || null, isNowAdded, cardId]);
     
     res.json({ success: true, message: 'Card updated successfully' });
   } catch (error) {

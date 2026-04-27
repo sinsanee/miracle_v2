@@ -278,6 +278,95 @@
             margin-top: 15px;
         }
 
+        /* ── SPREADSHEET GRID VIEW ─────────────────────────── */
+        .sheet-grid {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.95rem;
+        }
+
+        .sheet-grid th {
+            background: rgba(131, 56, 236, 0.25);
+            color: var(--accent);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 10px 14px;
+            text-align: left;
+            border: 1px solid rgba(131, 56, 236, 0.3);
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            white-space: nowrap;
+        }
+
+        .sheet-grid td {
+            padding: 8px 14px;
+            border: 1px solid rgba(131, 56, 236, 0.15);
+            vertical-align: middle;
+            color: rgba(255,255,255,0.85);
+        }
+
+        .sheet-row { transition: background 0.15s; }
+        .sheet-row:hover td { background: rgba(131, 56, 236, 0.1); }
+
+        .sheet-row.unadded td {
+            opacity: 0.45;
+        }
+        .sheet-row.unadded:hover td { opacity: 0.7; }
+
+        .sheet-row.unadded td:first-child {
+            border-left: 3px solid rgba(255, 170, 0, 0.6);
+        }
+
+        .added-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .added-badge.yes {
+            background: rgba(0,255,136,0.15);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+        .added-badge.no {
+            background: rgba(255,170,0,0.15);
+            color: var(--warning);
+            border: 1px solid var(--warning);
+        }
+
+        /* new-row input row at the bottom of the sheet */
+        .sheet-new-row td { background: rgba(0,245,255,0.04); }
+        .sheet-new-row input,
+        .sheet-new-row select {
+            width: 100%;
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid rgba(0,245,255,0.4);
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.95rem;
+            padding: 4px 2px;
+            outline: none;
+        }
+        .sheet-new-row input::placeholder { color: rgba(255,255,255,0.3); }
+        .sheet-new-row input:focus,
+        .sheet-new-row select:focus { border-bottom-color: var(--accent); }
+        .sheet-new-row select option { background: #0a0e27; }
+
+        .sheet-wrapper {
+            display: none;
+            overflow-x: auto;
+            border-radius: 12px;
+            border: 1px solid rgba(131,56,236,0.3);
+        }
+        .sheet-wrapper.active { display: block; }
+        /* ────────────────────────────────────────────────────── */
+
         .modal {
             display: none;
             position: fixed;
@@ -682,6 +771,7 @@
                 <button class="btn btn-primary" onclick="openBulkModal()">+ Bulk Add Cards</button>
                 <button class="btn btn-primary" onclick="openCreateModal()">+ Add New Card</button>
                 <button class="btn" style="border-color: var(--accent); color: var(--accent);" onclick="openRegenerateModal()">🔁 Regenerate Set</button>
+                <button class="btn" id="view-toggle-btn" style="border-color: #00f5ff; color: #00f5ff;" onclick="toggleView()">📋 Grid View</button>
             </div>
         </div>
 
@@ -710,6 +800,18 @@
                     <option value="dropping">Dropping Only</option>
                     <option value="not-dropping">Not Dropping Only</option>
                     <option value="scheduled">Scheduled Only</option>
+                    <option value="unadded">Not Added Yet</option>
+                    <option value="added">Added Only</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="set-filter">Set:</label>
+                <select id="set-filter" onchange="filterCards()">
+                    <option value="all">All Sets</option>
+                    <% sets.forEach(set => { %>
+                        <option value="<%= set.id %>"><%= set.name %></option>
+                    <% }); %>
                 </select>
             </div>
             
@@ -727,7 +829,9 @@
                          data-id="<%= card.id %>" 
                          data-name="<%= card.name.toLowerCase() %>"
                          data-dropping="<%= card.dropping %>"
-                         data-scheduled="<%= card.scheduled_drop ? '1' : '0' %>">
+                         data-scheduled="<%= card.scheduled_drop ? '1' : '0' %>"
+                         data-added="<%= card.added != null ? card.added : 1 %>"
+                         data-set="<%= card.set_id %>">
                         <input type="checkbox" class="card-checkbox" value="<%= card.id %>" style="position: absolute; top: 10px; left: 10px; width: 20px; height: 20px; cursor: pointer; z-index: 10;">
                         <% if (card.bordered_image) { %>
                             <img src="/cards/images/<%= card.bordered_image %>" alt="<%= card.name %>" class="card-image">
@@ -756,7 +860,78 @@
                     </div>
                 <% }); %>
             <% } %>
+        </div><!-- end .cards-grid -->
+
+        <!-- ── SPREADSHEET GRID VIEW ───────────────────────── -->
+        <div class="sheet-wrapper" id="sheet-wrapper">
+            <table class="sheet-grid" id="sheet-grid">
+                <thead>
+                    <tr>
+                        <th style="width:60px;">ID</th>
+                        <th>Name</th>
+                        <th style="width:90px;">Edition</th>
+                        <th>Set</th>
+                        <th style="width:100px;">Added</th>
+                        <th style="width:130px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="sheet-body">
+                    <% cards.forEach(function(card) { %>
+                    <tr class="sheet-row <%= card.added == 0 ? 'unadded' : '' %>"
+                        data-id="<%= card.id %>"
+                        data-name="<%= card.name.toLowerCase() %>"
+                        data-dropping="<%= card.dropping %>"
+                        data-scheduled="<%= card.scheduled_drop ? '1' : '0' %>"
+                        data-added="<%= card.added %>"
+                        data-set="<%= card.set_id %>">
+                        <td><%= card.id %></td>
+                        <td><strong><%= card.name %></strong></td>
+                        <td><%= card.edition %></td>
+                        <td><%= card.set_name || '—' %></td>
+                        <td>
+                            <% if (card.added == 1) { %>
+                                <span class="added-badge yes">✓ Added</span>
+                            <% } else { %>
+                                <span class="added-badge no">⏳ Not added</span>
+                            <% } %>
+                        </td>
+                        <td>
+                            <% if (card.added == 0) { %>
+                                <button class="btn btn-small btn-primary"
+                                    onclick="generateCard(<%= card.id %>, '<%= card.name.replace(/'/g,"\\'") %>', <%= card.edition %>, <%= card.set_id || 'null' %>)">
+                                    🎴 Generate
+                                </button>
+                            <% } else { %>
+                                <button class="btn btn-small"
+                                    onclick="openEditModal(<%= card.id %>)">Edit</button>
+                            <% } %>
+                        </td>
+                    </tr>
+                    <% }); %>
+                </tbody>
+                <tfoot>
+                    <tr class="sheet-new-row" id="sheet-new-row">
+                        <td style="color: rgba(255,255,255,0.3); font-style:italic;">new</td>
+                        <td><input type="text" id="new-row-name" placeholder="Card name…"></td>
+                        <td><input type="number" id="new-row-edition" placeholder="1" value="1" min="1" style="width:70px;"></td>
+                        <td>
+                            <select id="new-row-set">
+                                <option value="">— set —</option>
+                                <% sets.forEach(function(s) { %>
+                                    <option value="<%= s.id %>"><%= s.name %></option>
+                                <% }); %>
+                            </select>
+                        </td>
+                        <td><span class="added-badge no">⏳ Not added</span></td>
+                        <td>
+                            <button class="btn btn-small" style="border-color:var(--accent);color:var(--accent);"
+                                onclick="addUnaddedRow()">+ Add</button>
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
         </div>
+        <!-- ─────────────────────────────────────────────────── -->
     </div>
 
     <!-- Create/Edit Card Modal -->
@@ -1838,28 +2013,29 @@
             var searchTerm = document.getElementById('search-input').value.toLowerCase();
             var sortBy = document.getElementById('sort-select').value;
             var statusFilter = document.getElementById('status-filter').value;
+            var setFilter = document.getElementById('set-filter').value;
             
             var cardsGrid = document.querySelector('.cards-grid');
             var cardItems = Array.from(document.querySelectorAll('.card-item'));
             
-            // Filter cards
             cardItems.forEach(function(card) {
-                var cardName = card.getAttribute('data-name');
-                var dropping = card.getAttribute('data-dropping');
+                var cardName  = card.getAttribute('data-name');
+                var dropping  = card.getAttribute('data-dropping');
                 var scheduled = card.getAttribute('data-scheduled');
+                var added     = card.getAttribute('data-added');
+                var setId     = card.getAttribute('data-set');
                 
                 var matchesSearch = cardName.includes(searchTerm);
+                var matchesSet    = setFilter === 'all' || setId === setFilter;
                 var matchesStatus = true;
                 
-                if (statusFilter === 'dropping') {
-                    matchesStatus = dropping === '1';
-                } else if (statusFilter === 'not-dropping') {
-                    matchesStatus = dropping === '0' && scheduled === '0';
-                } else if (statusFilter === 'scheduled') {
-                    matchesStatus = scheduled === '1';
-                }
+                if (statusFilter === 'dropping')      matchesStatus = dropping === '1';
+                else if (statusFilter === 'not-dropping') matchesStatus = dropping === '0' && scheduled === '0';
+                else if (statusFilter === 'scheduled')    matchesStatus = scheduled === '1';
+                else if (statusFilter === 'unadded')      matchesStatus = added === '0';
+                else if (statusFilter === 'added')        matchesStatus = added === '1';
                 
-                if (matchesSearch && matchesStatus) {
+                if (matchesSearch && matchesStatus && matchesSet) {
                     card.classList.remove('hidden');
                 } else {
                     card.classList.add('hidden');
@@ -1884,17 +2060,10 @@
                 return 0;
             });
             
-            // Reorder in DOM
-            visibleCards.forEach(function(card) {
-                cardsGrid.appendChild(card);
-            });
-            
-            // Show hidden cards at the end
+            visibleCards.forEach(function(card) { cardsGrid.appendChild(card); });
             cardItems.filter(function(card) {
                 return card.classList.contains('hidden');
-            }).forEach(function(card) {
-                cardsGrid.appendChild(card);
-            });
+            }).forEach(function(card) { cardsGrid.appendChild(card); });
         }
 
         function resetFilters() {
@@ -2006,6 +2175,130 @@
                 btn.textContent = '🔁 Retry';
             });
         }
+
+        // ── VIEW TOGGLE ─────────────────────────────────────
+        var currentView = 'card'; // 'card' | 'sheet'
+
+        function toggleView() {
+            var cardsGrid  = document.querySelector('.cards-grid');
+            var sheetWrap  = document.getElementById('sheet-wrapper');
+            var btn        = document.getElementById('view-toggle-btn');
+
+            if (currentView === 'card') {
+                currentView = 'sheet';
+                cardsGrid.style.display = 'none';
+                sheetWrap.classList.add('active');
+                btn.textContent = '🃏 Card View';
+                filterSheetRows();
+            } else {
+                currentView = 'card';
+                sheetWrap.classList.remove('active');
+                cardsGrid.style.display = '';
+                btn.textContent = '📋 Grid View';
+            }
+        }
+
+        // Filter the sheet rows (mirrors filterCards logic)
+        function filterSheetRows() {
+            var searchTerm   = document.getElementById('search-input').value.toLowerCase();
+            var sortBy       = document.getElementById('sort-select').value;
+            var statusFilter = document.getElementById('status-filter').value;
+            var setFilter    = document.getElementById('set-filter').value;
+
+            var tbody = document.getElementById('sheet-body');
+            var rows  = Array.from(tbody.querySelectorAll('.sheet-row'));
+
+            rows.forEach(function(row) {
+                var name      = row.getAttribute('data-name');
+                var dropping  = row.getAttribute('data-dropping');
+                var scheduled = row.getAttribute('data-scheduled');
+                var added     = row.getAttribute('data-added');
+                var setId     = row.getAttribute('data-set');
+
+                var matchSearch = name.includes(searchTerm);
+                var matchStatus = true;
+                var matchSet    = setFilter === 'all' || setId === setFilter;
+
+                if (statusFilter === 'dropping')    matchStatus = dropping === '1';
+                else if (statusFilter === 'not-dropping') matchStatus = dropping === '0' && scheduled === '0';
+                else if (statusFilter === 'scheduled')    matchStatus = scheduled === '1';
+                else if (statusFilter === 'unadded')      matchStatus = added === '0';
+                else if (statusFilter === 'added')        matchStatus = added === '1';
+
+                row.style.display = (matchSearch && matchStatus && matchSet) ? '' : 'none';
+            });
+
+            // Sort
+            var visible = rows.filter(function(r) { return r.style.display !== 'none'; });
+            visible.sort(function(a, b) {
+                if (sortBy === 'id-asc')   return parseInt(a.dataset.id) - parseInt(b.dataset.id);
+                if (sortBy === 'id-desc')  return parseInt(b.dataset.id) - parseInt(a.dataset.id);
+                if (sortBy === 'name-asc') return a.dataset.name.localeCompare(b.dataset.name);
+                if (sortBy === 'name-desc') return b.dataset.name.localeCompare(a.dataset.name);
+                return 0;
+            });
+            visible.forEach(function(r) { tbody.appendChild(r); });
+        }
+
+        // Override filterCards to also update sheet when in sheet view
+        var _origFilterCards = filterCards;
+        filterCards = function() {
+            _origFilterCards();
+            if (currentView === 'sheet') filterSheetRows();
+        };
+
+        // ── GENERATE CARD (unadded → open modal pre-filled) ──
+        function generateCard(id, name, edition, setId) {
+            // Switch back to card view so modal renders properly
+            if (currentView === 'sheet') toggleView();
+
+            // Open edit modal — which will pre-fill from the server
+            openEditModal(id);
+        }
+
+        // ── ADD UNADDED ROW (spreadsheet-style) ─────────────
+        function addUnaddedRow() {
+            var name    = document.getElementById('new-row-name').value.trim();
+            var edition = parseInt(document.getElementById('new-row-edition').value) || 1;
+            var setId   = document.getElementById('new-row-set').value;
+
+            if (!name) {
+                document.getElementById('new-row-name').focus();
+                return;
+            }
+
+            fetch('/admin/cards/create-unadded', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, edition: edition, set_id: setId || null })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    showMessage('✓ ' + data.message);
+                    // Clear inputs
+                    document.getElementById('new-row-name').value = '';
+                    document.getElementById('new-row-edition').value = '1';
+                    document.getElementById('new-row-set').value = '';
+                    // Reload so the new row appears with proper ID
+                    setTimeout(function() { location.reload(); }, 800);
+                } else {
+                    showMessage(data.error || 'Failed to add card', true);
+                }
+            })
+            .catch(function() { showMessage('An error occurred', true); });
+        }
+
+        // Allow pressing Enter in the new-row name field to submit
+        document.addEventListener('DOMContentLoaded', function() {
+            var nameInput = document.getElementById('new-row-name');
+            if (nameInput) {
+                nameInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') { e.preventDefault(); addUnaddedRow(); }
+                });
+            }
+        });
+        // ────────────────────────────────────────────────────
 
         // Refresh page
         function refreshPage() {
