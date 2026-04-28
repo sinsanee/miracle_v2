@@ -340,7 +340,7 @@
         }
 
         /* new-row input row at the bottom of the sheet */
-        .sheet-new-row td { background: rgba(0,245,255,0.04); }
+        .sheet-new-row td { background: rgba(0,245,255,0.06); border-top: 1px solid rgba(0,245,255,0.2); }
         .sheet-new-row input,
         .sheet-new-row select {
             width: 100%;
@@ -874,6 +874,24 @@
                         <th style="width:100px;">Added</th>
                         <th style="width:130px;">Action</th>
                     </tr>
+                    <tr class="sheet-new-row" id="sheet-new-row">
+                        <td style="color: rgba(255,255,255,0.3); font-style:italic;">new</td>
+                        <td><input type="text" id="new-row-name" placeholder="Card name…"></td>
+                        <td><input type="number" id="new-row-edition" placeholder="1" value="1" min="1" style="width:70px;"></td>
+                        <td>
+                            <select id="new-row-set">
+                                <option value="">— set —</option>
+                                <% sets.forEach(function(s) { %>
+                                    <option value="<%= s.id %>"><%= s.name %></option>
+                                <% }); %>
+                            </select>
+                        </td>
+                        <td><span class="added-badge no">⏳ Not added</span></td>
+                        <td>
+                            <button class="btn btn-small" style="border-color:var(--accent);color:var(--accent);"
+                                onclick="addUnaddedRow()">+ Add</button>
+                        </td>
+                    </tr>
                 </thead>
                 <tbody id="sheet-body">
                     <% cards.forEach(function(card) { %>
@@ -909,26 +927,6 @@
                     </tr>
                     <% }); %>
                 </tbody>
-                <tfoot>
-                    <tr class="sheet-new-row" id="sheet-new-row">
-                        <td style="color: rgba(255,255,255,0.3); font-style:italic;">new</td>
-                        <td><input type="text" id="new-row-name" placeholder="Card name…"></td>
-                        <td><input type="number" id="new-row-edition" placeholder="1" value="1" min="1" style="width:70px;"></td>
-                        <td>
-                            <select id="new-row-set">
-                                <option value="">— set —</option>
-                                <% sets.forEach(function(s) { %>
-                                    <option value="<%= s.id %>"><%= s.name %></option>
-                                <% }); %>
-                            </select>
-                        </td>
-                        <td><span class="added-badge no">⏳ Not added</span></td>
-                        <td>
-                            <button class="btn btn-small" style="border-color:var(--accent);color:var(--accent);"
-                                onclick="addUnaddedRow()">+ Add</button>
-                        </td>
-                    </tr>
-                </tfoot>
             </table>
         </div>
         <!-- ─────────────────────────────────────────────────── -->
