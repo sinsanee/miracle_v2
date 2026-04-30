@@ -2,6 +2,7 @@ const { Client, Interaction, ApplicationCommandOptionType, EmbedBuilder , Button
 const { all, get, run } = require('../../models/query');
 const { userExists, createUser } = require('../../models/users');
 const { cardGenFromCropped } = require('../../models/cardGen');
+const { getCardBorder } = require('../../models/cardBorder');
 const { resolveImageBuffer } = require('../../models/imageResolver'); // Import the image resolver
 const sharp = require('sharp');
 
@@ -142,16 +143,16 @@ module.exports = {
                 const imageUrl = `${process.env.IMAGE_BASE_URL}/${drop.card.image}`;
                 const croppedImageBuffer = await resolveImageBuffer(imageUrl);
                 
-                // FIXED: Download border from web server
-                const borderUrl = `${process.env.BORDER_BASE_URL}/${drop.set.border}`;
-                const borderBuffer = await resolveImageBuffer(borderUrl);
+                // Resolve border (no ownedCard yet at drop time — use set border directly)
+                const borderBuffer = await resolveImageBuffer(`${process.env.BORDER_BASE_URL}/${drop.set.border}`);
 
                 // Generate the full card with print number as subtitle
                 const cardImage = await cardGenFromCropped(
                     croppedImageBuffer,
                     { name: drop.card.name, subtitle: "", footer: `${printNumber}` },
                     borderBuffer,
-                    drop.condition
+                    drop.condition,
+                    null
                 );
                 
                 cardImages.push(cardImage);
@@ -355,6 +356,26 @@ module.exports = {
                             }
 
                             await btnInteraction.message.channel.send({ content: successMessage });
+
+                            // Wishlist pings
+                            const wishers = await all(
+                                `SELECT wishlist.user_id FROM wishlist
+                                 JOIN users ON users.userid = wishlist.user_id
+                                 WHERE users.ping = 1
+                                   AND wishlist.user_id != ?
+                                   AND (
+                                       wishlist.card_id = ?
+                                       OR (wishlist.card_id IS NULL AND wishlist.card_name = ? AND wishlist.edition = ?)
+                                   )`,
+                                [winner, card.id, card.name, card.edition]
+                            );
+
+                            if (wishers.length > 0) {
+                                const pingMentions = wishers.map(w => `<@${w.user_id}>`).join(' ');
+                                await btnInteraction.message.channel.send({
+                                    content: `⭐ ${pingMentions} — a card on your wishlist was just dropped! **${card.name}** (Ed. ${card.edition}) from **${set.name}**.`
+                                });
+                            }
 
                             console.log(`Card claimed: ${uniqueId} - ${card.name} by ${winnerUser.username} (toughness: ${toughness})`);
 
