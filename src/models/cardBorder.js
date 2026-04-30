@@ -17,7 +17,7 @@ async function getCardBorder(ownedCard, setData) {
     if (ownedCard.border_item_id) {
         const item = await get('SELECT image FROM items WHERE id = ?', [ownedCard.border_item_id]);
         if (item?.image) {
-            customBorderUrl = `${process.env.BORDER_BASE_URL}/${item.image}`;
+            customBorderUrl = `${process.env.ITEM_BASE_URL}/${item.image}`;
         }
     }
 
