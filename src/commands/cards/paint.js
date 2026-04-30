@@ -8,7 +8,7 @@ const { cardGenFromCropped, rollPaintColor, rollEffects } = require('../../model
 const { resolveImageBuffer } = require('../../models/imageResolver');
 
 const GOLD_ITEM_ID  = 7;
-const PAINT_COST    = 1;
+const PAINT_COST    = 0;
 
 module.exports = {
     /**
@@ -54,7 +54,7 @@ module.exports = {
             // Generate card image preview with rolled paint + effects
             const croppedBuffer = await resolveImageBuffer(`${process.env.IMAGE_BASE_URL}/${card.image}`);
             // For the preview, use a temporary ownedCard-like object with the rolled values
-            const previewOwned  = { ...ownedCard, r, g, b, effect: effectCode, border_type: null, border_item_id: null };
+            const previewOwned  = { ...ownedCard, r, g, b, effect: effectCode };
             const borderBuffer  = await getCardBorder(previewOwned, setData);
 
             const generatedCard = await cardGenFromCropped(
@@ -163,7 +163,7 @@ module.exports = {
 
                     currentRoll = { r: rerolled.r, g: rerolled.g, b: rerolled.b, anchorName: rerolled.anchorName, effectCode: rerolledFx.effectCode, colorHex: newHex, effectDesc: newFxDesc };
 
-                    const rerollOwned  = { ...ownedCard, r: rerolled.r, g: rerolled.g, b: rerolled.b, effect: rerolledFx.effectCode, border_type: null, border_item_id: null };
+                    const rerollOwned  = { ...ownedCard, r: rerolled.r, g: rerolled.g, b: rerolled.b, effect: rerolledFx.effectCode };
                     const rerollBorder = await getCardBorder(rerollOwned, setData);
                     const newCard = await cardGenFromCropped(
                         croppedBuffer,
